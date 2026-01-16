@@ -1,0 +1,30 @@
+{
+  "$schema": "https://plandex.ai/schemas/model-pack-inline.schema.json",
+  "planner": {
+    "largeContextFallback": {
+      "largeContextFallback": "zai/glm-4.7",
+      "modelId": "zai/glm-4.7"
+    },
+    "modelId": "zai/glm-4.7"
+  },
+  "architect": {
+    "largeContextFallback": {
+      "largeContextFallback": "zai/glm-4.7",
+      "modelId": "zai/glm-4.7"
+    },
+    "modelId": "zai/glm-4.7"
+  },
+  "coder": {
+    "largeContextFallback": "zai/glm-4.7",
+    "modelId": "zai/glm-4.7"
+  },
+  "summarizer": "zai/glm-4.7",
+  "builder": {
+    "modelId": "zai/glm-4.7",
+    "strongModel": "zai/glm-4.7"
+  },
+  "wholeFileBuilder": "zai/glm-4.7",
+  "names": "zai/glm-4.7",
+  "commitMessages": "zai/glm-4.7",
+  "autoContinue": "zai/glm-4.7"
+}

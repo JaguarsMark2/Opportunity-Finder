@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (fast lint)
+        entry: npm run lint
+        language: system
+        pass_filenames: false
+
+      - id: typecheck
+        name: typecheck (type check)
+        entry: npm run type-check
+        language: system
+        pass_filenames: false

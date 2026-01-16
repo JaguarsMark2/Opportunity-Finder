@@ -1,0 +1,112 @@
+# Environment variables
+
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+build/
+.next/
+out/
+
+# Project documentation and non-essential folders
+
+.agentvibes/
+.claude/
+.codex/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.plandex-v2/
+.qwen/
+_bmad/
+_bmad/bmb/
+PRPs-agentic-eng/
+_bmad-output/
+# docs/
+plandex/
+.qwen/
+attached_assets/
+images/
+
+# caches
+.cache/
+.tmp/
+tmp/
+coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# env / secrets
+.env
+.env.*
+!.env.example
+.env.local
+.env.production
+
+# Development
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+server.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+server/public
+vite.config.ts.*
+
+# misc
+*.pid
+*.seed
+*.swp
+
+# python (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# PyTorch model files (downloaded automatically)
+*.pt
+*.pth
+!models/.gitkeep
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+.cache/
+.temp/
+.tmp/
+*.tmp
+*.bak
+*.orig
+*.tar.gz
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Package manager locks (keep package-lock.json for npm)
+yarn.lock
+pnpm-lock.yaml

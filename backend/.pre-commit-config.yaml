@@ -1,0 +1,14 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (fast lint)
+        entry: bash -c 'source venv/bin/activate && ruff check app/ tests/'
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: mypy (type check)
+        entry: bash -c 'source venv/bin/activate && mypy app/ --no-error-summary'
+        language: system
+        pass_filenames: false
