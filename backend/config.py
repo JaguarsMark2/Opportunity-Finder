@@ -1,6 +1,4 @@
-import os
-from typing import Optional
-from pydantic import Field
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,7 +40,7 @@ class Settings(BaseSettings):
 
     SERPAPI_KEY: str = "dev_serpapi_key"
 
-    PRODUCT_HUNT_TOKEN: Optional[str] = None
+    PRODUCT_HUNT_TOKEN: str | None = None
 
     # Frontend URL
     FRONTEND_URL: str = "http://localhost:5173"

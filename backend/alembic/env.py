@@ -1,10 +1,8 @@
-from logging.config import fileConfig
 import sys
-import os
+from logging.config import fileConfig
 from pathlib import Path
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 
@@ -12,7 +10,10 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parents[0]))
 
 from app.db import Base
-from app.models import *  # Import all models
+
+# Import all models for autogenerate support
+# pylint: disable=unused-wildcard-import,wildcard-import
+from app.models import *  # noqa: F401,F403
 from config import settings
 
 # this is the Alembic Config object, which provides

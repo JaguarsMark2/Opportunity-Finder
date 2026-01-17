@@ -93,8 +93,8 @@ def list_opportunities():
         query = db.query(
             Opportunity,
             UserOpportunity.status.label('user_status'),
-            UserOpportunity.notes.label('user_notes'),
-            UserOpportunity.is_saved
+            UserOpportunity.user_notes.label('user_notes'),
+            UserOpportunity.saved.label('is_saved')
         ).outerjoin(
             UserOpportunity,
             and_(

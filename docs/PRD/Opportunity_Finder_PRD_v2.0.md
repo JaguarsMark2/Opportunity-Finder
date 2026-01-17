@@ -115,18 +115,77 @@ Automated system that monitors Reddit, Indie Hackers, ProductHunt, HackerNews, a
 
 **UI Design Specification**
 
-> **CRITICAL:** Use approved prototype design at `docs/PRD/opportunity-finder.html`
+> **CRITICAL:** Use approved prototype design at `docs/HTML/opportunity-finder.html`
+
+### Theme Configuration (Tailwind CSS)
+
+**File:** `frontend/tailwind.config.js`
+
+```javascript
+export default {
+  darkMode: 'class', // Enable class-based dark mode
+  theme: {
+    extend: {
+      colors: {
+        slate: {
+          850: '#0f172a',
+          900: '#0f172a',
+          950: '#020617',
+        },
+      },
+      backgroundImage: {
+        'dark-gradient': 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
+        'dark-gradient-reverse': 'linear-gradient(135deg, #1e293b 0%, #0f172a 100%)',
+        'blue-purple': 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)',
+        'white-gray': 'linear-gradient(135deg, #fff 0%, #cbd5e1 100%)',
+      },
+    },
+  },
+}
+```
 
 **Dark Mode (Default):**
-- Background: Linear gradient from navy (#0f172a) to slate (#1e293b)
-- Cards: Semi-transparent dark with subtle borders (rgba(148, 163, 184, 0.1))
-- Text: White (#fff) for headings, light slate (#e2e8f0) for body
-- Score badges: Color-coded (green 80+, blue 60-79, amber 40-59, red <40)
+
+| Element | Tailwind Classes | Hex Values |
+|---------|-----------------|------------|
+| **Background** | `bg-gradient-to-br from-slate-900 to-slate-800` | `#0f172a → #1e293b` |
+| **Header** | `bg-slate-900/80 backdrop-blur-md border-slate-700/50` | `rgba(15, 23, 42, 0.8)` |
+| **Cards** | `bg-slate-800/50 border-slate-700/50` | `rgba(30, 41, 59, 0.5)` |
+| **Text Headings** | `text-white` | `#fff` |
+| **Text Body** | `text-slate-200` or `text-slate-300` | `#e2e8f0 / #cbd5e1` |
+| **Text Muted** | `text-slate-400` or `text-slate-500` | `#94a3b8 / #64748b` |
+| **Borders** | `border-slate-700/50` | `rgba(51, 65, 85, 0.5)` |
+| **Primary Button** | `bg-blue-500 text-white hover:bg-blue-600` | `#3b82f6` |
+| **Input Fields** | `bg-slate-900/50 border-slate-700/50 text-slate-200` | `bg: rgba(15, 23, 42, 0.5)` |
+
+**Score Badge Colors:**
+
+| Score Range | Tailwind Classes | Hex Color |
+|-------------|-----------------|-----------|
+| **80+ (Excellent)** | `text-emerald-500 border-emerald-500 bg-emerald-500/10` | `#10b981` |
+| **60-79 (Good)** | `text-blue-500 border-blue-500 bg-blue-500/10` | `#3b82f6` |
+| **40-59 (Maybe)** | `text-amber-500 border-amber-500 bg-amber-500/10` | `#f59e0b` |
+| **<40 (Reject)** | `text-red-500 border-red-500 bg-red-500/10` | `#ef4444` |
+
+**Icon Colors (for stats cards):**
+
+| Icon | Tailwind Classes | Hex Color |
+|------|-----------------|-----------|
+| **Target (Total)** | `text-blue-500 bg-blue-500/10` | `#3b82f6` |
+| **Trending Up (Validated)** | `text-emerald-500 bg-emerald-500/10` | `#10b981` |
+| **Alert Circle (High Score)** | `text-amber-500 bg-amber-500/10` | `#f59e0b` |
+| **Bar Chart (Average)** | `text-purple-500 bg-purple-500/10` | `#8b5cf6` |
 
 **Light Mode (Optional Toggle):**
 - Background: White to light gray gradient
 - Cards: White with subtle shadows
 - Text: Dark gray for body, black for headings
+
+**Implementation Notes:**
+1. All components use Tailwind utility classes - NO inline styles
+2. Dark mode is default - set in `App.tsx` with `useState(() => true)`
+3. `dark` class is added to `document.documentElement` via `useEffect`
+4. Reference HTML: `docs/HTML/opportunity-finder.html`
 
 ### 3.2 Technology Stack
 

@@ -36,12 +36,12 @@ const queryClient = new QueryClient({
 
 function App() {
   const [darkMode, setDarkMode] = useState(() => {
-    // Check localStorage or system preference
+    // Default to dark mode, check localStorage first
     const saved = localStorage.getItem('darkMode');
     if (saved !== null) {
       return JSON.parse(saved);
     }
-    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return true; // Default to dark mode
   });
 
   // Apply dark mode to document
@@ -58,7 +58,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
-          <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+          <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-900 dark:to-slate-800">
             <Header darkMode={darkMode} setDarkMode={setDarkMode} />
 
             <Routes>
