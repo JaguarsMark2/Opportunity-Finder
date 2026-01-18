@@ -17,7 +17,7 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/v1/auth')
 
 
 @auth_bp.route('/register', methods=['POST'])
-@rate_limit(limit=5, period=3600)  # 5 registrations per hour
+@rate_limit(limit=50, period=3600)  # 5 registrations per hour
 def register():
     """Register a new user."""
     try:

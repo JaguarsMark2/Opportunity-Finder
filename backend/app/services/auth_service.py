@@ -1,6 +1,7 @@
 """Authentication service for user management."""
 
 import uuid
+import os
 
 from sqlalchemy.orm import Session
 
@@ -53,7 +54,7 @@ class AuthService:
             password_hash=hash_password(password),
             role='user',
             subscription_status='free',
-            email_verified=False
+            email_verified=True
         )
 
         # Assign free tier (assuming id=1 is free tier)

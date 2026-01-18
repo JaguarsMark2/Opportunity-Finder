@@ -1,0 +1,29 @@
+{
+  "frontend_url": "http://localhost:5173",
+  "backend_url": "http://127.0.0.1:5000",
+  "headless": true,
+  "signup_link_texts": [
+    "Get Started Free",
+    "Get Started",
+    "Start Free Trial",
+    "Sign Up",
+    "Sign up",
+    "Register",
+    "Create Account"
+  ],
+  "signin_link_texts": [
+    "Sign In",
+    "Sign in",
+    "Login",
+    "Log In"
+  ],
+  "expected_login_not_contains": [
+    "dashboard"
+  ],
+  "smoke_user_password": "Test1234!",
+  "timeouts": {
+    "page_load": 30,
+    "sleep_short": 1,
+    "sleep_medium": 2
+  }
+}

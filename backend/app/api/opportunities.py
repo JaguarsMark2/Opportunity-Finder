@@ -227,9 +227,9 @@ def list_opportunities():
                 'total_count': total_count
             }
         }), 200
-
     except Exception as e:
-        db.close()
+        if db is not None:
+            db.close()
         return jsonify({'error': str(e)}), 500
 
 
@@ -253,7 +253,8 @@ def get_opportunity(opportunity_id: str):
         opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
 
         if not opp:
-            db.close()
+            if db is not None:
+                db.close()
             return jsonify({'error': 'Opportunity not found'}), 404
 
         # Get user-specific data
@@ -331,7 +332,8 @@ def get_opportunity(opportunity_id: str):
         return jsonify(response_data), 200
 
     except Exception as e:
-        db.close()
+        if db is not None:
+            db.close()
         return jsonify({'error': str(e)}), 500
 
 
@@ -339,6 +341,7 @@ def get_opportunity(opportunity_id: str):
 @jwt_required()
 @rate_limit(limit=30, period=60)
 def update_opportunity(opportunity_id: str):
+    db = None
     """Update user-specific opportunity data (status, notes, saved).
 
     Args:
@@ -364,7 +367,8 @@ def update_opportunity(opportunity_id: str):
         # Get opportunity
         opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
         if not opp:
-            db.close()
+            if db is not None:
+                db.close()
             return jsonify({'error': 'Opportunity not found'}), 404
 
         # Get or create user opportunity record
@@ -408,7 +412,8 @@ def update_opportunity(opportunity_id: str):
         return jsonify(response_data), 200
 
     except Exception as e:
-        db.close()
+        if db is not None:
+            db.close()
         return jsonify({'error': str(e)}), 500
 
 
@@ -487,7 +492,8 @@ def get_stats():
         }), 200
 
     except Exception as e:
-        db.close()
+        if db is not None:
+            db.close()
         return jsonify({'error': str(e)}), 500
 
 

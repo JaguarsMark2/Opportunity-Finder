@@ -1,0 +1,4 @@
+After signup, no 'Back to login' / 'Login' option detected
+No email input found on login form
+No password input found on login form
+No submit button found on login form

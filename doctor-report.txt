@@ -1,0 +1,154 @@
+
+=== Semgrep (fast static scan) ===
+                    
+                    
+┌──────────────────┐
+│ 12 Code Findings │
+└──────────────────┘
+                           
+    backend/app/__init__.py
+    ❯❱ python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+          Hardcoded variable `TESTING` detected. Use environment variables or config files instead
+          Details: https://sg.run/ndZ2                                                            
+                                                                                                  
+           30┆ app.config["TESTING"] = True
+                  
+    backend/run.py
+    ❯❱ python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host
+          Running flask app with host 0.0.0.0 could expose the server publicly.
+          Details: https://sg.run/eLby                                         
+                                                                               
+           38┆ app.run(host="0.0.0.0", port=5000, debug=settings.DEBUG)
+                         
+    deployment/nginx.conf
+    ❯❱ generic.nginx.security.possible-h2c-smuggling.possible-nginx-h2c-smuggling
+          Conditions for Nginx H2C smuggling identified. H2C smuggling allows upgrading HTTP/1.1 connections 
+          to lesser-known HTTP/2 over cleartext (h2c) connections which can allow a bypass of reverse proxy  
+          access controls, and lead to long-lived, unrestricted HTTP traffic directly to back-end servers. To
+          mitigate: WebSocket support required: Allow only the value websocket for HTTP/1.1 upgrade headers  
+          (e.g., Upgrade: websocket). WebSocket support not required: Do not forward Upgrade headers.        
+          Details: https://sg.run/ploZ                                                                       
+                                                                                                             
+           61┆ proxy_http_version 1.1;
+           62┆ proxy_set_header Upgrade $http_upgrade;
+           63┆ proxy_set_header Connection 'upgrade';
+                                     
+    docs/HTML/opportunity-finder.html
+    ❯❱ html.security.audit.missing-integrity.missing-integrity
+          This tag is missing an 'integrity' subresource integrity attribute. The 'integrity' attribute allows
+          for the browser to verify that externally hosted files (for example from a CDN) are delivered       
+          without unexpected manipulation. Without this attribute, if an attacker can modify the externally   
+          hosted resource, this could lead to XSS and other types of attacks. To prevent this, include the    
+          base64-encoded cryptographic hash of the resource (file) you’re telling the browser to fetch in the 
+          'integrity' attribute for all externally hosted files.                                              
+          Details: https://sg.run/krXA                                                                        
+                                                                                                              
+            7┆ <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+            ⋮┆----------------------------------------
+            8┆ <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-
+               dom.production.min.js"></script>                                  
+            ⋮┆----------------------------------------
+            9┆ <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+                                    
+    docs/PRD/opportunity-finder.html
+    ❯❱ html.security.audit.missing-integrity.missing-integrity
+          This tag is missing an 'integrity' subresource integrity attribute. The 'integrity' attribute allows
+          for the browser to verify that externally hosted files (for example from a CDN) are delivered       
+          without unexpected manipulation. Without this attribute, if an attacker can modify the externally   
+          hosted resource, this could lead to XSS and other types of attacks. To prevent this, include the    
+          base64-encoded cryptographic hash of the resource (file) you’re telling the browser to fetch in the 
+          'integrity' attribute for all externally hosted files.                                              
+          Details: https://sg.run/krXA                                                                        
+                                                                                                              
+            7┆ <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+            ⋮┆----------------------------------------
+            8┆ <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-
+               dom.production.min.js"></script>                                  
+            ⋮┆----------------------------------------
+            9┆ <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+                         
+    docs/PY/api_server.py
+    ❯❱ python.flask.security.audit.app-run-param-config.avoid_app_run_with_bad_host
+          Running flask app with host 0.0.0.0 could expose the server publicly.
+          Details: https://sg.run/eLby                                         
+                                                                               
+          196┆ app.run(debug=True, host='0.0.0.0', port=5000)
+   
+    ❯❱ python.flask.security.audit.debug-enabled.debug-enabled
+          Detected Flask app with debug=True. Do not deploy to production with this flag enabled as it will   
+          leak sensitive information. Instead, consider using Flask configuration variables or setting 'debug'
+          using system environment variables.                                                                 
+          Details: https://sg.run/dKrd                                                                        
+                                                                                                              
+          196┆ app.run(debug=True, host='0.0.0.0', port=5000)
+                                 
+    docs/PY/opportunity_finder.py
+   ❯❯❱ python.sqlalchemy.security.sqlalchemy-execute-raw-query.sqlalchemy-execute-raw-query
+          Avoiding SQL string concatenation: untrusted input concatenated with raw SQL query can result in SQL
+          Injection. In order to execute raw query safely, prepared statement should be used. SQLAlchemy      
+          provides TextualSQL to easily used prepared statement with named parameters. For complex SQL        
+          composition, use SQL Expression Language or Schema Definition Language. In most cases, SQLAlchemy   
+          ORM will be a better option.                                                                        
+          Details: https://sg.run/2b1L                                                                        
+                                                                                                              
+          103┆ cursor.execute(
+          104┆     f'INSERT INTO opportunities ({columns}) VALUES ({placeholders})',
+          105┆     tuple(data.values())
+          106┆ )
+
+
+=== Backend: install deps ===
+
+=== Backend: import check (catches missing modules fast) ===
+
+=== Backend: pytest ===
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-7.4.3, pluggy-1.6.0
+rootdir: /mnt/c/AI-Projects/Opportunity-Finder/backend
+configfile: pyproject.toml
+testpaths: tests
+plugins: cov-4.1.0
+collected 10 items
+
+tests/test_base_collector.py ........                                    [ 80%]
+tests/test_models.py ..                                                  [100%]
+
+============================== 10 passed in 3.57s ==============================
+
+=== Frontend: install deps ===
+npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
+npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
+npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
+npm warn deprecated glob@7.2.3: Glob versions prior to v9 are no longer supported
+npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
+npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+added 528 packages, and audited 529 packages in 42s
+
+172 packages are looking for funding
+  run `npm fund` for details
+
+7 vulnerabilities (5 moderate, 2 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+=== Frontend: TypeScript typecheck ===
+
+=== Frontend: lint ===
+
+=== Frontend: build ===
+vite v5.4.21 building for production...
+transforming...
+✓ 1823 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.47 kB │ gzip:  0.30 kB
+dist/assets/index-P2nuq6bP.css   34.30 kB │ gzip:  6.29 kB
+dist/assets/index-BBPLnsRM.js   342.72 kB │ gzip: 98.33 kB
+✓ built in 30.35s
+
+=== Done. Report: doctor-report.txt ===

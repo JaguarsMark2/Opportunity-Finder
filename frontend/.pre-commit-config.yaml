@@ -3,12 +3,12 @@ repos:
     hooks:
       - id: eslint
         name: eslint (fast lint)
-        entry: npm run lint
+        entry: bash -c 'cd frontend && npm run lint'
         language: system
         pass_filenames: false
 
       - id: typecheck
         name: typecheck (type check)
-        entry: npm run type-check
+        entry: bash -c 'cd frontend && npm run type-check'
         language: system
         pass_filenames: false
