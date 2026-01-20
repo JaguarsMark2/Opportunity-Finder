@@ -29,6 +29,7 @@ plandex/
 .qwen/
 attached_assets/
 images/
+backend/qa_reports/
 
 # caches
 .cache/
@@ -110,3 +111,4 @@ Desktop.ini
 # Package manager locks (keep package-lock.json for npm)
 yarn.lock
 pnpm-lock.yaml
+backend.zip
