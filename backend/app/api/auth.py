@@ -21,12 +21,17 @@ auth_bp = Blueprint('auth', __name__, url_prefix='/api/v1/auth')
 
 
 @auth_bp.route('/register', methods=['POST'])
-@rate_limit(limit=50, period=3600)  # 5 registrations per hour
+@rate_limit(limit=200, period=3600)  # 200 registrations per hour (dev/QA)
 def register():
     """Register a new user."""
     try:
+        # Check if JSON parsing failed
+        json_data = request.get_json(silent=True)
+        if json_data is None:
+            return jsonify({'error': 'Invalid JSON'}), 400
+
         schema = RegisterSchema()
-        data = schema.load(request.json)
+        data = schema.load(json_data)
 
         db = SessionLocal()
         service = AuthService(db)
@@ -45,12 +50,17 @@ def register():
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit(limit=50, period=300)  # 50 login attempts per 5 minutes (dev/QA)
+@rate_limit(limit=200, period=300)  # 200 login attempts per 5 minutes (dev/QA)
 def login():
     """Authenticate user."""
     try:
+        # Check if JSON parsing failed
+        json_data = request.get_json(silent=True)
+        if json_data is None:
+            return jsonify({'error': 'Invalid JSON'}), 400
+
         schema = LoginSchema()
-        data = schema.load(request.json)
+        data = schema.load(json_data)
 
         db = SessionLocal()
         service = AuthService(db)
@@ -60,8 +70,6 @@ def login():
 
         return jsonify(result), 200
 
-    except JSONDecodeError:
-        return jsonify({'error': 'Invalid JSON'}), 400
     except ValidationError as e:
         return jsonify({'error': 'Validation failed', 'details': e.messages}), 400
     except ValueError as e:
