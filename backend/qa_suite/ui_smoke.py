@@ -1,3 +1,13 @@
+"""UI smoke tests for Opportunity Finder frontend.
+
+Comprehensive UI tests including:
+- Basic page loads and navigation
+- Form presence and structure checks
+- Signup/login flow verification
+- Dashboard route guard checks
+- UX dead-end detection (e.g., "check your email" without escape path)
+"""
+
 import time
 import uuid
 from selenium_common import make_driver, click_first_text, find_inputs, list_texts
@@ -31,6 +41,7 @@ def run_ui_checks(cfg, report):
             report.fail("UI Sign In click", "could not click sign-in link")
             return
         time.sleep(cfg["timeouts"]["sleep_short"])
+        signin_url = driver.current_url
         emails, passwords, submits = find_inputs(driver)
         if emails and passwords and submits:
             report.pass_("UI Sign In form has email/password/submit")
@@ -48,6 +59,7 @@ def run_ui_checks(cfg, report):
             report.fail("UI Signup click", "could not click signup link")
             return
         time.sleep(cfg["timeouts"]["sleep_short"])
+        signup_url = driver.current_url
         emails, passwords, submits = find_inputs(driver)
         if emails and passwords and submits:
             report.pass_("UI Signup form has email/password/submit")
@@ -68,15 +80,26 @@ def run_ui_checks(cfg, report):
         time.sleep(cfg["timeouts"]["sleep_medium"])
 
         page = driver.page_source.lower()
+        page_text = driver.page_source
+        current_url = driver.current_url
+
+        # Check for success/verify message
         if ("check your email" in page) or ("verify" in page) or ("successful" in page):
             report.pass_("UI Signup shows success/verify message")
         else:
             report.fail("UI Signup shows success/verify message", "could not detect success/verify text")
 
+        # UX dead-end check: look for login/back option
         if ("sign in" in page) or ("login" in page) or ("log in" in page):
             report.pass_("UI post-signup offers login")
         else:
-            report.fail("UI post-signup offers login", "no login option detected (user forced to use back button?)")
+            # Check for visible buttons/links that might lead back
+            buttons, links = list_texts(driver)
+            escape_options = [t for t in links + buttons if any(s in t.lower() for s in ["sign in", "login", "log in", "back", "home"])]
+            if escape_options:
+                report.pass_("UI post-signup offers escape path", f"found: {escape_options}")
+            else:
+                report.fail("UI post-signup offers escape path", f"no login/back option detected (user stuck on verify page). Page: {current_url}")
 
         # Attempt login
         if not click_first_text(driver, cfg["signin_link_texts"]):
@@ -103,14 +126,39 @@ def run_ui_checks(cfg, report):
         else:
             report.pass_("UI login redirect is acceptable")
 
-        # Guard check
+        # Dashboard guard check: authenticated user should access dashboard
+        report.note(f"Post-login URL: {driver.current_url}")
+
+        # Check if /dashboard is accessible
         driver.get(f + "/dashboard")
         time.sleep(cfg["timeouts"]["sleep_short"])
+        dashboard_accessible = "dashboard" in driver.current_url.lower()
         page = driver.page_source.lower()
-        if ("sign in" in page) or ("login" in page) or ("unauthorized" in page):
+
+        if dashboard_accessible or ("opportunities" in page or "welcome" in page or "dashboard" in page):
+            report.pass_("UI /dashboard accessible when authenticated")
+        else:
+            report.fail("UI /dashboard accessible when authenticated", f"URL={driver.current_url}, page content suggests redirect/block")
+
+        # Now check anonymous user cannot access dashboard
+        driver.delete_all_cookies()
+        driver.get(f + "/dashboard")
+        time.sleep(cfg["timeouts"]["sleep_short"])
+
+        page = driver.page_source.lower()
+        current_url = driver.current_url.lower()
+
+        # Should be redirected to login or shown auth error
+        is_protected = (
+            "sign in" in page or "login" in page or "log in" in page or
+            "unauthorized" in page or "forbidden" in page or
+            "/login" in current_url or "/signin" in current_url
+        )
+
+        if is_protected:
             report.pass_("UI /dashboard guarded when not authenticated")
         else:
-            report.note("UI /dashboard guard inconclusive")
+            report.fail("UI /dashboard guarded when not authenticated", f"URL={driver.current_url} - page appears accessible without auth")
 
     finally:
         driver.quit()

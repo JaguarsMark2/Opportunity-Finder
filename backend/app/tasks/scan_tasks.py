@@ -89,7 +89,7 @@ def run_scan(self, sources: list | None = None):
     db = self.db
 
     # Create scan record
-    scan_id = str(uuid.uuid4())
+    scan_id = self.request.id
     scan = Scan(
         id=scan_id,
         status='running',

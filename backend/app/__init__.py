@@ -49,6 +49,7 @@ def create_app(test_config: bool = False) -> Flask:
     # Register blueprints
     from app.api.admin import admin_bp
     from app.api.auth import auth_bp
+    from app.api.dashboard import dashboard_bp
     from app.api.opportunities import opportunities_bp
     from app.api.payments import payments_bp
     from app.api.scan import scan_bp
@@ -56,6 +57,7 @@ def create_app(test_config: bool = False) -> Flask:
     from app.api.user import user_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(scoring_bp)
+    app.register_blueprint(dashboard_bp)
     app.register_blueprint(opportunities_bp)
     app.register_blueprint(user_bp)
     app.register_blueprint(scan_bp)

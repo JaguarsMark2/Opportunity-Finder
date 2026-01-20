@@ -39,7 +39,7 @@ def register():
 
 
 @auth_bp.route('/login', methods=['POST'])
-@rate_limit(limit=10, period=300)  # 10 login attempts per 5 minutes
+@rate_limit(limit=50, period=300)  # 50 login attempts per 5 minutes (dev/QA)
 def login():
     """Authenticate user."""
     try:

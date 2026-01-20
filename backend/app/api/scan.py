@@ -20,11 +20,11 @@ scan_bp = Blueprint('scan', __name__, url_prefix='/api/v1/scan')
 
 @scan_bp.route('', methods=['POST'])
 @jwt_required()
-@rate_limit(limit=3, period=3600)
+@rate_limit(limit=10, period=60)
 def trigger_scan():
     """Trigger a new data collection scan.
 
-    Admin only - rate limited to 3 per hour.
+    Admin only - rate limited to 10 per minute (dev/QA).
 
     Request Body (optional):
         {
