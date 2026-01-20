@@ -1,5 +1,9 @@
 """Authentication API routes."""
 
+from json import JSONDecodeError
+
+from marshmallow import ValidationError
+
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
 
@@ -32,6 +36,8 @@ def register():
 
         return jsonify(result), 201
 
+    except ValidationError as e:
+        return jsonify({'error': 'Validation failed', 'details': e.messages}), 400
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception:
@@ -54,6 +60,10 @@ def login():
 
         return jsonify(result), 200
 
+    except JSONDecodeError:
+        return jsonify({'error': 'Invalid JSON'}), 400
+    except ValidationError as e:
+        return jsonify({'error': 'Validation failed', 'details': e.messages}), 400
     except ValueError as e:
         return jsonify({'error': str(e)}), 401
     except Exception:

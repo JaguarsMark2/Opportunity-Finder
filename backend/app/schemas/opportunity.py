@@ -28,6 +28,7 @@ class OpportunityUpdateSchema(Schema):
         validate=validate.OneOf(['new', 'investigating', 'interested', 'dismissed'])
     )
     notes = fields.String(required=False, validate=validate.Length(max=5000))
+    is_saved = fields.Boolean(required=False)
 
 
 class OpportunityResponseSchema(Schema):

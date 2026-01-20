@@ -372,7 +372,7 @@ def get_analytics(time_range: str = '30d') -> tuple[dict[str, Any] | None, str |
         total_users = db.query(User).count()
         new_users = db.query(User).filter(User.created_at >= cutoff).count() if cutoff else 0
         active_users = db.query(User).filter(User.subscription_status == 'active').count()
-        trial_users = db.query(User).filter(User.subscription_status == 'trialing').count()
+        trial_users = db.query(User).filter(User.subscription_status == 'free').count()
         admin_users = db.query(User).filter(User.role == 'admin').count()
 
         # Revenue metrics (simplified - assumes price per tier)
@@ -421,7 +421,7 @@ def get_analytics(time_range: str = '30d') -> tuple[dict[str, Any] | None, str |
                 'total': total_users,
                 'new': new_users,
                 'active': active_users,
-                'trialing': trial_users,
+                'free': trial_users,
                 'admins': admin_users,
                 'daily_signups': list(reversed(daily_signups)),
             },
