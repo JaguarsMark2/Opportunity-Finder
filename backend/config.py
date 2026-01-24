@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     SENDGRID_API_KEY: str = "dev_sendgrid_key"
     SENDGRID_FROM_EMAIL: str = "noreply@opportunityfinder.com"
 
+    # Dev Mode
+    SKIP_EMAIL_VERIFICATION: bool = False  # Set to True in development to skip email verification
+
     # Data Source APIs
     REDDIT_CLIENT_ID: str = "dev_reddit_client_id"
     REDDIT_CLIENT_SECRET: str = "dev_reddit_secret"
@@ -43,7 +46,7 @@ class Settings(BaseSettings):
     PRODUCT_HUNT_TOKEN: str | None = None
 
     # Frontend URL
-    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_URL: str = "http://localhost:5174"
 
     model_config = SettingsConfigDict(
         env_file=".env",

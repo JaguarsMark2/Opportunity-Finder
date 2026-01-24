@@ -1,6 +1,6 @@
 {
-  "frontend_url": "http://localhost:5173",
-  "backend_url": "http://127.0.0.1:5000",
+  "frontend_url": "http://localhost:5174",
+  "backend_url": "http://127.0.0.1:5001",
   "headless": true,
   "admin_email": "of2@best-spot.co.uk",
   "admin_password": "Test1234!",

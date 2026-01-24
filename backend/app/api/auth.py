@@ -74,8 +74,10 @@ def login():
         return jsonify({'error': 'Validation failed', 'details': e.messages}), 400
     except ValueError as e:
         return jsonify({'error': str(e)}), 401
-    except Exception:
-        return jsonify({'error': 'Login failed'}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Login failed', 'details': str(e)}), 500
 
 
 @auth_bp.route('/verify-email/<token>', methods=['GET'])

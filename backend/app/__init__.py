@@ -13,6 +13,59 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import settings
 
 
+def _bootstrap_admin_if_configured(app: Flask) -> None:
+    """Bootstrap admin user if BOOTSTRAP_ADMIN_EMAIL is configured.
+
+    On app startup, if BOOTSTRAP_ADMIN_EMAIL environment variable is set:
+    - Finds user by email
+    - Promotes them to admin role if not already admin
+    - Logs the action
+
+    This is a one-time promotion per startup, useful for development and
+    initial deployment.
+
+    Args:
+        app: Flask application instance
+    """
+    bootstrap_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL")
+    if not bootstrap_email:
+        return
+
+    try:
+        from app.db import SessionLocal
+        from app.models import User, UserRole
+
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.email == bootstrap_email).first()
+
+            if not user:
+                app.logger.warning(
+                    f"[Admin Bootstrap] User '{bootstrap_email}' not found. "
+                    "User must register first before being promoted to admin."
+                )
+                return
+
+            if user.role == UserRole.ADMIN:
+                app.logger.info(
+                    f"[Admin Bootstrap] User '{bootstrap_email}' is already an admin."
+                )
+                return
+
+            # Promote to admin
+            user.role = UserRole.ADMIN
+            db.commit()
+            app.logger.info(
+                f"[Admin Bootstrap] Promoted user '{bootstrap_email}' (id={user.id}) to admin role."
+            )
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        app.logger.error(f"[Admin Bootstrap] Failed to promote admin: {e}")
+
+
 def create_app(test_config: bool = False) -> Flask:
     """Create and configure Flask application.
 
@@ -63,6 +116,9 @@ def create_app(test_config: bool = False) -> Flask:
     app.register_blueprint(scan_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(payments_bp)
+
+    # Admin bootstrap: promote specified user to admin on startup
+    _bootstrap_admin_if_configured(app)
 
     # JWT error handlers
     @jwt.expired_token_loader

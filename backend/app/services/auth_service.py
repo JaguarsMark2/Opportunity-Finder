@@ -48,13 +48,14 @@ class AuthService:
             raise ValueError("Email already registered")
 
         # Create user
+        # In development mode with SKIP_EMAIL_VERIFICATION, auto-verify users
         user = User(
             id=str(uuid.uuid4()),
             email=email.lower(),
             password_hash=hash_password(password),
             role='user',
             subscription_status='free',
-            email_verified=True
+            email_verified=settings.SKIP_EMAIL_VERIFICATION
         )
 
         # Assign free tier (assuming id=1 is free tier)
@@ -96,7 +97,9 @@ class AuthService:
         if not user or not verify_password(password, user.password_hash):
             raise ValueError("Invalid email or password")
 
-        if not user.email_verified:
+        # Skip email verification check in development mode if configured
+        from config import settings
+        if not user.email_verified and not settings.SKIP_EMAIL_VERIFICATION:
             raise ValueError("Please verify your email before logging in")
 
         # Generate tokens (Flask-JWT-Extended handles this)
