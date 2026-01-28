@@ -20,7 +20,7 @@ from app.schemas.admin import (
 )
 from app.services import admin_service
 from app.services.scoring_service import ScoringService
-from app.utils.admin_helpers import admin_required
+from app.utils.admin_helpers import DEV_ADMIN_ID, DEV_MODE, admin_required
 
 # Create blueprint
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/v1/admin')
@@ -32,7 +32,6 @@ admin_bp = Blueprint('admin', __name__, url_prefix='/api/v1/admin')
 
 @admin_bp.route('/pricing', methods=['GET'])
 @admin_bp.route('/pricing/<string:tier_id>', methods=['GET'])
-@jwt_required()
 @admin_required()
 def get_pricing_tiers(tier_id: str | None = None):
     """Get pricing tiers or specific tier by ID.
@@ -78,7 +77,6 @@ def get_pricing_tiers(tier_id: str | None = None):
 
 
 @admin_bp.route('/pricing', methods=['POST'])
-@jwt_required()
 @admin_required()
 def create_pricing_tier():
     """Create a new pricing tier.
@@ -110,7 +108,6 @@ def create_pricing_tier():
 
 
 @admin_bp.route('/pricing/<string:tier_id>', methods=['PATCH', 'PUT'])
-@jwt_required()
 @admin_required()
 def update_pricing_tier(tier_id: str):
     """Update a pricing tier.
@@ -148,7 +145,6 @@ def update_pricing_tier(tier_id: str):
 
 
 @admin_bp.route('/pricing/<string:tier_id>', methods=['DELETE'])
-@jwt_required()
 @admin_required()
 def delete_pricing_tier(tier_id: str):
     """Delete a pricing tier.
@@ -176,7 +172,6 @@ def delete_pricing_tier(tier_id: str):
 # ============================================================================
 
 @admin_bp.route('/users', methods=['GET'])
-@jwt_required()
 @admin_required()
 def list_users():
     """List users with optional filters.
@@ -229,7 +224,6 @@ def list_users():
 
 
 @admin_bp.route('/users/<string:user_id>', methods=['GET'])
-@jwt_required()
 @admin_required()
 def get_user_details(user_id: str):
     """Get detailed user information.
@@ -252,7 +246,6 @@ def get_user_details(user_id: str):
 
 
 @admin_bp.route('/users/<string:user_id>', methods=['PATCH', 'PUT'])
-@jwt_required()
 @admin_required()
 def update_user(user_id: str):
     """Update user as admin.
@@ -293,7 +286,6 @@ def update_user(user_id: str):
 # ============================================================================
 
 @admin_bp.route('/scoring/config', methods=['GET'])
-@jwt_required()
 @admin_required()
 def get_scoring_config():
     """Get current scoring configuration.
@@ -302,24 +294,29 @@ def get_scoring_config():
         JSON response with scoring weights and thresholds
     """
     try:
-        scoring_service = ScoringService()
+        from app.db import SessionLocal
 
-        config = {
-            'weights': scoring_service.get_weights(),
-            'thresholds': scoring_service.get_thresholds(),
-            'last_updated': scoring_service.get_last_updated(),
-            'updated_by': scoring_service.get_updated_by(),
-        }
+        db = SessionLocal()
+        try:
+            scoring_service = ScoringService(db)
 
-        schema = ScoringConfigResponseSchema()
-        return jsonify({'data': schema.dump(config)})
+            config = {
+                'weights': scoring_service.weights,
+                'thresholds': scoring_service.thresholds,
+                'enabled_criteria': scoring_service.enabled_criteria,
+            }
+
+            schema = ScoringConfigResponseSchema()
+            return jsonify({'data': schema.dump(config)})
+
+        finally:
+            db.close()
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @admin_bp.route('/scoring/weights', methods=['PUT'])
-@jwt_required()
 @admin_required()
 def update_scoring_weights():
     """Update scoring weights.
@@ -331,6 +328,8 @@ def update_scoring_weights():
         JSON response confirming update
     """
     try:
+        from app.db import SessionLocal
+
         # Validate request
         schema = ScoringWeightsUpdateSchema()
         try:
@@ -338,22 +337,21 @@ def update_scoring_weights():
         except ValidationError as err:
             return jsonify({'error': 'Validation failed', 'details': err.messages}), 400
 
-        # Update weights
-        scoring_service = ScoringService()
-        user_id = get_jwt_identity()
+        db = SessionLocal()
+        try:
+            # Update weights
+            scoring_service = ScoringService(db)
+            scoring_service.update_weights(data)
 
-        success, error = scoring_service.update_weights(data, user_id)
-        if error:
-            return jsonify({'error': error}), 400
-
-        return jsonify({'data': {'message': 'Scoring weights updated successfully'}})
+            return jsonify({'data': {'message': 'Scoring weights updated successfully'}})
+        finally:
+            db.close()
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @admin_bp.route('/scoring/thresholds', methods=['PUT'])
-@jwt_required()
 @admin_required()
 def update_scoring_thresholds():
     """Update scoring thresholds.
@@ -365,6 +363,8 @@ def update_scoring_thresholds():
         JSON response confirming update
     """
     try:
+        from app.db import SessionLocal
+
         # Validate request
         schema = ScoringThresholdsUpdateSchema()
         try:
@@ -372,15 +372,49 @@ def update_scoring_thresholds():
         except ValidationError as err:
             return jsonify({'error': 'Validation failed', 'details': err.messages}), 400
 
-        # Update thresholds
-        scoring_service = ScoringService()
-        user_id = get_jwt_identity()
+        db = SessionLocal()
+        try:
+            # Update thresholds
+            scoring_service = ScoringService(db)
+            scoring_service.update_thresholds(data)
 
-        success, error = scoring_service.update_thresholds(data, user_id)
-        if error:
-            return jsonify({'error': error}), 400
+            return jsonify({'data': {'message': 'Scoring thresholds updated successfully'}})
+        finally:
+            db.close()
 
-        return jsonify({'data': {'message': 'Scoring thresholds updated successfully'}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/scoring/criteria', methods=['PUT'])
+@admin_required()
+def update_scoring_criteria():
+    """Update enabled scoring criteria.
+
+    Request Body:
+        JSON object with criteria boolean fields (upvotes, mentions, etc.)
+
+    Returns:
+        JSON response confirming update
+    """
+    try:
+        from app.db import SessionLocal
+
+        # Get criteria from request
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No criteria provided'}), 400
+
+        # Update enabled criteria
+        db = SessionLocal()
+        try:
+            scoring_service = ScoringService(db)
+            scoring_service.update_enabled_criteria(data)
+
+            return jsonify({'data': {'message': 'Scoring criteria updated successfully'}})
+
+        finally:
+            db.close()
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -391,7 +425,6 @@ def update_scoring_thresholds():
 # ============================================================================
 
 @admin_bp.route('/analytics', methods=['GET'])
-@jwt_required()
 @admin_required()
 def get_analytics():
     """Get analytics data for admin dashboard.
@@ -426,7 +459,6 @@ def get_analytics():
 # ============================================================================
 
 @admin_bp.route('/health', methods=['GET'])
-@jwt_required()
 @admin_required()
 def get_system_health():
     """Get system health status.
@@ -462,6 +494,503 @@ def get_system_health():
             health_data['redis'] = 'unhealthy'
 
         return jsonify({'data': health_data})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Data Source Management Endpoints
+# ============================================================================
+
+@admin_bp.route('/data-sources', methods=['GET'])
+@admin_required()
+def list_data_sources():
+    """Get all data sources with their configurations.
+
+    Returns:
+        JSON response with all data sources
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            sources = service.get_all_sources()
+
+            # Format for frontend
+            result = []
+            for source_id, config in sources.items():
+                result.append({
+                    'id': source_id,
+                    'name': config.get('name', source_id),
+                    'description': config.get('description', ''),
+                    'is_enabled': config.get('is_enabled', False),
+                    'requires_auth': config.get('requires_auth', False),
+                    'config_fields': config.get('config_fields', []),
+                    'config': {k: ('••••••••' if 'secret' in k.lower() or 'password' in k.lower() or 'token' in k.lower() or 'key' in k.lower() else v) for k, v in config.get('config', {}).items()},
+                    'has_config': bool(any(v for v in config.get('config', {}).values())),
+                    'collector_available': config.get('collector_available', False),
+                    'docs_url': config.get('docs_url', '')
+                })
+
+            return jsonify({'data': result})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/data-sources/<source_id>', methods=['GET'])
+@admin_required()
+def get_data_source(source_id: str):
+    """Get a single data source configuration.
+
+    Args:
+        source_id: Source identifier
+
+    Returns:
+        JSON response with source configuration
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            source = service.get_source(source_id)
+
+            if not source:
+                return jsonify({'error': f'Unknown source: {source_id}'}), 404
+
+            return jsonify({'data': {
+                'id': source_id,
+                **source
+            }})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/data-sources/<source_id>/config', methods=['PUT'])
+@admin_required()
+def update_data_source_config(source_id: str):
+    """Update configuration for a data source.
+
+    Args:
+        source_id: Source identifier
+
+    Request Body:
+        JSON object with configuration values
+
+    Returns:
+        JSON response confirming update
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No configuration provided'}), 400
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            updated, error = service.update_source_config(source_id, data)
+
+            if error:
+                return jsonify({'error': error}), 400
+
+            return jsonify({
+                'data': {
+                    'message': f'Configuration updated for {source_id}',
+                    'source_id': source_id
+                }
+            })
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/data-sources/<source_id>/enable', methods=['POST'])
+@admin_required()
+def enable_data_source(source_id: str):
+    """Enable a data source.
+
+    Args:
+        source_id: Source identifier
+
+    Returns:
+        JSON response confirming enablement
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            success, error = service.enable_source(source_id)
+
+            if error:
+                return jsonify({'error': error}), 400
+
+            return jsonify({
+                'data': {
+                    'message': f'{source_id} enabled',
+                    'source_id': source_id,
+                    'is_enabled': True
+                }
+            })
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/data-sources/<source_id>/disable', methods=['POST'])
+@admin_required()
+def disable_data_source(source_id: str):
+    """Disable a data source.
+
+    Args:
+        source_id: Source identifier
+
+    Returns:
+        JSON response confirming disablement
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            success, error = service.disable_source(source_id)
+
+            if error:
+                return jsonify({'error': error}), 400
+
+            return jsonify({
+                'data': {
+                    'message': f'{source_id} disabled',
+                    'source_id': source_id,
+                    'is_enabled': False
+                }
+            })
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/data-sources/<source_id>/test', methods=['POST'])
+@admin_required()
+def test_data_source(source_id: str):
+    """Test connectivity for a data source.
+
+    Args:
+        source_id: Source identifier
+
+    Returns:
+        JSON response with test results
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.data_source_service import DataSourceService
+
+        db = SessionLocal()
+        try:
+            service = DataSourceService(db)
+            result = service.test_source(source_id)
+
+            return jsonify({'data': result})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# AI Configuration Endpoints
+# ============================================================================
+
+@admin_bp.route('/ai/config', methods=['GET'])
+@admin_required()
+def get_ai_config():
+    """Get AI service configuration.
+
+    Returns:
+        JSON response with AI config (API key masked)
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.ai_service import AIService
+
+        db = SessionLocal()
+        try:
+            service = AIService(db)
+            config = service.get_config()
+            return jsonify({'data': config})
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/ai/config', methods=['PUT'])
+@admin_required()
+def update_ai_config():
+    """Update AI service configuration.
+
+    Request Body:
+        provider: AI provider (glm, openai, anthropic)
+        api_key: API key for the provider
+        model: Model to use
+        enabled: Whether AI analysis is enabled
+
+    Returns:
+        JSON response confirming update
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.ai_service import AIService
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No configuration provided'}), 400
+
+        db = SessionLocal()
+        try:
+            service = AIService(db)
+
+            # Get current config and update with new values
+            current = service._load_config()
+            if 'provider' in data:
+                current['provider'] = data['provider']
+            if 'api_key' in data and data['api_key']:  # Only update if provided
+                current['api_key'] = data['api_key']
+            if 'model' in data:
+                current['model'] = data['model']
+            if 'api_url' in data:
+                current['api_url'] = data['api_url']
+            if 'enabled' in data:
+                current['enabled'] = data['enabled']
+
+            service.save_config(current)
+            return jsonify({'data': {'message': 'AI configuration updated successfully'}})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/ai/test', methods=['POST'])
+@admin_required()
+def test_ai_connection():
+    """Test AI API connection.
+
+    Returns:
+        JSON response with test results
+    """
+    try:
+        from app.db import SessionLocal
+        from app.services.ai_service import AIService
+
+        db = SessionLocal()
+        try:
+            service = AIService(db)
+            result = service.test_connection()
+            return jsonify({'data': result})
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# Filtering Rules Endpoints
+# ============================================================================
+
+@admin_bp.route('/filter-rules', methods=['GET'])
+@admin_required()
+def get_filter_rules():
+    """Get all filtering rules.
+
+    Returns:
+        JSON response with filter rules
+    """
+    try:
+        from app.db import SessionLocal
+        from app.models import SystemSettings
+
+        db = SessionLocal()
+        try:
+            settings = db.query(SystemSettings).filter(
+                SystemSettings.key == 'filter_rules'
+            ).first()
+
+            rules = settings.value if settings else {
+                'exclude_keywords': [
+                    'hiring', 'job', 'salary', 'interview', 'resume',
+                    'who is hiring', 'freelancer', 'remote job',
+                    'show hn', 'launched', 'my startup', 'i built'
+                ],
+                'require_keywords': [],  # Must contain at least one
+                'min_upvotes': 5,
+                'min_comments': 2,
+                'exclude_categories': ['political', 'hardware', 'career'],
+                'custom_rules': []  # User-defined rules
+            }
+
+            return jsonify({'data': rules})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/filter-rules', methods=['PUT'])
+@admin_required()
+def update_filter_rules():
+    """Update filtering rules.
+
+    Request Body:
+        exclude_keywords: List of keywords to exclude
+        require_keywords: List of keywords to require
+        min_upvotes: Minimum upvotes required
+        min_comments: Minimum comments required
+        exclude_categories: Categories to exclude
+        custom_rules: User-defined rules
+
+    Returns:
+        JSON response confirming update
+    """
+    try:
+        from app.db import SessionLocal
+        from app.models import SystemSettings
+        from datetime import UTC, datetime
+
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No rules provided'}), 400
+
+        db = SessionLocal()
+        try:
+            settings = db.query(SystemSettings).filter(
+                SystemSettings.key == 'filter_rules'
+            ).first()
+
+            if settings:
+                settings.value = data
+                settings.updated_at = datetime.now(UTC)
+            else:
+                settings = SystemSettings(
+                    key='filter_rules',
+                    value=data
+                )
+                db.add(settings)
+
+            db.commit()
+            return jsonify({'data': {'message': 'Filter rules updated successfully'}})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/filter-rules/add-exclusion', methods=['POST'])
+@admin_required()
+def add_exclusion_rule():
+    """Quick add an exclusion keyword or pattern.
+
+    Request Body:
+        keyword: Keyword or pattern to exclude
+        reason: Why this should be excluded (optional)
+
+    Returns:
+        JSON response confirming addition
+    """
+    try:
+        from app.db import SessionLocal
+        from app.models import SystemSettings
+        from datetime import UTC, datetime
+
+        data = request.get_json()
+        keyword = data.get('keyword', '').strip().lower()
+        reason = data.get('reason', '')
+
+        if not keyword:
+            return jsonify({'error': 'Keyword is required'}), 400
+
+        db = SessionLocal()
+        try:
+            settings = db.query(SystemSettings).filter(
+                SystemSettings.key == 'filter_rules'
+            ).first()
+
+            if settings:
+                rules = settings.value
+            else:
+                rules = {
+                    'exclude_keywords': [],
+                    'require_keywords': [],
+                    'min_upvotes': 5,
+                    'min_comments': 2,
+                    'exclude_categories': [],
+                    'custom_rules': []
+                }
+
+            # Add to exclude_keywords if not already there
+            if keyword not in rules.get('exclude_keywords', []):
+                rules.setdefault('exclude_keywords', []).append(keyword)
+
+            # Also add to custom_rules with reason
+            rules.setdefault('custom_rules', []).append({
+                'type': 'exclude_keyword',
+                'value': keyword,
+                'reason': reason,
+                'added_at': datetime.now(UTC).isoformat()
+            })
+
+            if settings:
+                settings.value = rules
+                settings.updated_at = datetime.now(UTC)
+            else:
+                settings = SystemSettings(key='filter_rules', value=rules)
+                db.add(settings)
+
+            db.commit()
+            return jsonify({'data': {'message': f'Added exclusion: {keyword}'}})
+
+        finally:
+            db.close()
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -22,6 +22,10 @@ import AdminDashboard from './pages/Admin/AdminDashboard';
 import UserManagement from './pages/Admin/UserManagement';
 import PricingManagement from './pages/Admin/PricingManagement';
 import ScoringConfig from './pages/Admin/ScoringConfig';
+import DataSources from './pages/Admin/DataSources';
+import Scans from './pages/Admin/Scans';
+import Emails from './pages/Admin/Emails';
+import AIConfig from './pages/Admin/AIConfig';
 
 // Create react-query client
 const queryClient = new QueryClient({
@@ -114,6 +118,10 @@ function App() {
                 <Route path="users" element={<UserManagement />} />
                 <Route path="pricing" element={<PricingManagement />} />
                 <Route path="scoring" element={<ScoringConfig />} />
+                <Route path="scans" element={<Scans />} />
+                <Route path="emails" element={<Emails />} />
+                <Route path="data-sources" element={<DataSources />} />
+                <Route path="ai-config" element={<AIConfig />} />
               </Route>
 
               {/* Catch all - redirect to home */}

@@ -1,6 +1,7 @@
 """Data collector service for orchestrating all collectors."""
 
 import os
+import re
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -13,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.collectors import BaseCollector, get_available_collectors, get_enabled_collectors
 from app.collectors.microns_collector import MicronsCollector
-from app.models import Opportunity, Scan, SourceLink
+from app.models import Opportunity, Scan, SourceLink, SystemSettings
+from app.services.ai_service import AIService
 
 
 class DataCollectorService:
@@ -56,6 +58,89 @@ class DataCollectorService:
 
         # Initialize collectors
         self.collectors = self._initialize_collectors()
+
+        # Initialize AI service
+        self.ai_service = AIService(db)
+
+        # Load filter rules
+        self.filter_rules = self._load_filter_rules()
+
+    def _load_filter_rules(self) -> dict[str, Any]:
+        """Load filter rules from database."""
+        settings = self.db.query(SystemSettings).filter(
+            SystemSettings.key == 'filter_rules'
+        ).first()
+
+        if settings and settings.value:
+            return settings.value
+
+        # Default filter rules
+        return {
+            'exclude_keywords': [
+                'hiring', 'job', 'career', 'salary', 'remote work',
+                'who is hiring', 'seeking freelancer', 'looking for developer'
+            ],
+            'require_keywords': [],
+            'min_upvotes': 5,
+            'min_comments': 2,
+            'exclude_categories': ['job_posting', 'promotional'],
+            'custom_rules': []
+        }
+
+    def _passes_filter_rules(self, opp_data: dict[str, Any]) -> tuple[bool, str | None]:
+        """Check if an opportunity passes the filter rules.
+
+        Args:
+            opp_data: Opportunity data dict
+
+        Returns:
+            Tuple of (passes, rejection_reason)
+        """
+        title = opp_data.get('title', '').lower()
+        description = opp_data.get('description', '').lower()
+        text = f"{title} {description}"
+        engagement = opp_data.get('engagement_metrics', {})
+
+        # Check exclude keywords
+        for keyword in self.filter_rules.get('exclude_keywords', []):
+            if keyword.lower() in text:
+                return False, f"Contains excluded keyword: {keyword}"
+
+        # Check required keywords (if any specified, at least one must match)
+        require_keywords = self.filter_rules.get('require_keywords', [])
+        if require_keywords:
+            found = any(kw.lower() in text for kw in require_keywords)
+            if not found:
+                return False, "Missing required keywords"
+
+        # Check minimum engagement
+        upvotes = engagement.get('upvotes', 0) or engagement.get('points', 0) or 0
+        comments = engagement.get('comments', 0) or 0
+        min_upvotes = self.filter_rules.get('min_upvotes', 5)
+        min_comments = self.filter_rules.get('min_comments', 2)
+
+        if upvotes < min_upvotes:
+            return False, f"Below minimum upvotes ({upvotes} < {min_upvotes})"
+
+        if comments < min_comments:
+            return False, f"Below minimum comments ({comments} < {min_comments})"
+
+        # Check custom rules
+        for rule in self.filter_rules.get('custom_rules', []):
+            rule_type = rule.get('type', '')
+            rule_value = rule.get('value', '').lower()
+
+            if rule_type == 'exclude_phrase' and rule_value in text:
+                return False, f"Matches custom rule: {rule.get('reason', rule_value)}"
+
+            if rule_type == 'exclude_regex':
+                try:
+                    if re.search(rule_value, text, re.IGNORECASE):
+                        return False, f"Matches regex rule: {rule.get('reason', rule_value)}"
+                except re.error:
+                    pass  # Invalid regex, skip
+
+        return True, None
 
     def _initialize_collectors(self) -> dict[str, BaseCollector]:
         """Initialize all enabled collectors.
@@ -230,6 +315,9 @@ class DataCollectorService:
 
             # Store opportunities in database
             stored_count = 0
+            filtered_count = 0
+            ai_analyzed_count = 0
+
             for opp_data in enriched_opportunities:
                 # Check for duplicates based on URL
                 existing = self.db.query(SourceLink).filter(
@@ -239,28 +327,85 @@ class DataCollectorService:
                 if existing:
                     continue
 
+                # Apply filter rules
+                passes_filter, rejection_reason = self._passes_filter_rules(opp_data)
+                if not passes_filter:
+                    filtered_count += 1
+                    print(f"Filtered out: {opp_data['title'][:50]}... - {rejection_reason}")
+                    continue
+
+                # Extract engagement metrics
+                engagement = opp_data.get('engagement_metrics', {})
+                pain_score = engagement.get('pain_score', 0)
+                upvotes = engagement.get('upvotes', 0) or engagement.get('points', 0) or 0
+                comments = engagement.get('comments', 0) or 0
+
+                # Use pain_score as initial score, or calculate from upvotes
+                initial_score = pain_score if pain_score > 0 else min(100, upvotes + comments)
+
+                # Default values
+                opp_title = opp_data['title']
+                opp_description = opp_data['description']
+                opp_category = None
+                ai_analysis = None
+
+                # Use AI to analyze if enabled
+                if self.ai_service.is_configured():
+                    try:
+                        analysis = self.ai_service.analyze_post(
+                            title=opp_data['title'],
+                            content=opp_data['description']
+                        )
+
+                        if analysis:
+                            ai_analyzed_count += 1
+
+                            # Check if AI says this is NOT a software opportunity
+                            if not analysis.get('is_software_opportunity', True):
+                                filtered_count += 1
+                                reason = analysis.get('rejection_reason', 'Not a software opportunity')
+                                print(f"AI rejected: {opp_data['title'][:50]}... - {reason}")
+                                continue
+
+                            # Use AI-generated title and description
+                            if analysis.get('opportunity_name'):
+                                opp_title = analysis['opportunity_name']
+
+                            if analysis.get('pain_point'):
+                                opp_description = analysis['pain_point']
+
+                            opp_category = analysis.get('category')
+                            ai_analysis = analysis
+
+                    except Exception as e:
+                        print(f"AI analysis failed for {opp_data['title'][:30]}...: {e}")
+
                 # Create opportunity
                 opportunity = Opportunity(
                     id=str(uuid.uuid4()),
-                    title=opp_data['title'],
-                    description=opp_data['description'],
-                    score=None,  # Will be calculated by scoring service
+                    title=opp_title,
+                    description=opp_description,
+                    problem=opp_description,  # Also set the problem field
+                    score=initial_score,
+                    problem_score=pain_score,
                     source_types=[opp_data['source_type']],
-                    mention_count=1,
+                    mention_count=max(1, upvotes),
+                    category=opp_category,
                     created_at=datetime.now(UTC)
                 )
                 self.db.add(opportunity)
 
-                # Create source link
+                # Create source link with original title
                 source_link = SourceLink(
                     id=str(uuid.uuid4()),
                     opportunity_id=opportunity.id,
                     source_type=opp_data['source_type'],
                     url=opp_data['url'],
-                    title=opp_data['title'],
+                    title=opp_data['title'],  # Keep original title in source link
                     engagement_metrics={
                         'engagement_score': opp_data.get('engagement_score', 0),
                         'engagement_level': opp_data.get('engagement_level', 'LOW'),
+                        'ai_analysis': ai_analysis,
                         **opp_data.get('engagement_metrics', {})
                     },
                     collected_at=datetime.now(UTC)
@@ -270,6 +415,8 @@ class DataCollectorService:
                 stored_count += 1
 
             self.db.commit()
+
+            print(f"Scan complete: {stored_count} stored, {filtered_count} filtered, {ai_analyzed_count} AI-analyzed")
 
             # Update scan
             scan.status = 'completed'
@@ -283,6 +430,8 @@ class DataCollectorService:
                 'status': 'completed',
                 'total_collected': len(all_results),
                 'new_opportunities': stored_count,
+                'filtered_out': filtered_count,
+                'ai_analyzed': ai_analyzed_count,
                 'sources': scan.sources_processed
             }
 

@@ -40,6 +40,7 @@ class Opportunity(Base):
     keyword_volume: Mapped[str | None] = mapped_column(String(50), nullable=True)
     growth_rate: Mapped[str | None] = mapped_column(String(50), nullable=True)
     competition_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     # Source tracking
     sources: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # JSONB

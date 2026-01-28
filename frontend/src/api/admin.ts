@@ -82,6 +82,16 @@ export const adminApi = {
     max_competitors?: number;
   }) => apiClient.put('/api/v1/admin/scoring/thresholds', data),
 
+  updateScoringCriteria: (data: {
+    upvotes?: boolean;
+    mentions?: boolean;
+    revenue_proof?: boolean;
+    competition?: boolean;
+    build_complexity?: boolean;
+    b2b_focus?: boolean;
+    engagement_signals?: boolean;
+  }) => apiClient.put('/api/v1/admin/scoring/criteria', data),
+
   // ============================================================================
   // Analytics
   // ============================================================================

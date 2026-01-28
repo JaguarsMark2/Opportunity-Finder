@@ -15,6 +15,7 @@ export default function AdminPanel() {
     { path: '/admin/scans', label: 'Scans', icon: '🔍' },
     { path: '/admin/emails', label: 'Emails', icon: '📧' },
     { path: '/admin/data-sources', label: 'Data Sources', icon: '🔌' },
+    { path: '/admin/ai-config', label: 'AI & Filtering', icon: '🤖' },
   ];
 
   return (

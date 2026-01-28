@@ -1,20 +1,50 @@
 /** Scoring configuration page for admins. */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { adminApi } from '../../api/admin';
+
+interface ScoringConfigData {
+  data: {
+    weights: {
+      demand_weight: number;
+      competition_weight: number;
+      engagement_weight: number;
+      validation_weight: number;
+      recency_weight: number;
+    };
+    thresholds: {
+      high_score_threshold: number;
+      medium_score_threshold: number;
+      validation_threshold: number;
+      min_competitors: number;
+      max_competitors: number;
+    };
+    enabled_criteria: Record<string, boolean>;
+    last_updated?: string;
+    updated_by?: string;
+  };
+}
 
 export default function ScoringConfig() {
   const queryClient = useQueryClient();
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [localCriteria, setLocalCriteria] = useState<Record<string, boolean>>({});
 
-  const { data: config, isLoading } = useQuery({
+  const { data: config, isLoading } = useQuery<ScoringConfigData>({
     queryKey: ['admin-scoring-config'],
     queryFn: async () => {
       const response = await adminApi.getScoringConfig();
       return response.data;
     },
   });
+
+  // Set local criteria when config loads
+  useEffect(() => {
+    if (config?.data?.enabled_criteria) {
+      setLocalCriteria(config.data.enabled_criteria);
+    }
+  }, [config]);
 
   const weightsMutation = useMutation({
     mutationFn: adminApi.updateScoringWeights,
@@ -31,6 +61,19 @@ export default function ScoringConfig() {
 
   const thresholdsMutation = useMutation({
     mutationFn: adminApi.updateScoringThresholds,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-scoring-config'] });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    },
+    onError: () => {
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    },
+  });
+
+  const criteriaMutation = useMutation({
+    mutationFn: adminApi.updateScoringCriteria,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-scoring-config'] });
       setSaveStatus('saved');
@@ -84,8 +127,20 @@ export default function ScoringConfig() {
     );
   }
 
-  const weights = config?.data?.weights || {};
-  const thresholds = config?.data?.thresholds || {};
+  const weights = config?.data?.weights || {
+    demand_weight: 0,
+    competition_weight: 0,
+    engagement_weight: 0,
+    validation_weight: 0,
+    recency_weight: 0,
+  };
+  const thresholds = config?.data?.thresholds || {
+    high_score_threshold: 70,
+    medium_score_threshold: 50,
+    validation_threshold: 60,
+    min_competitors: 1,
+    max_competitors: 20,
+  };
 
   return (
     <div>
@@ -111,6 +166,78 @@ export default function ScoringConfig() {
             {saveStatus === 'saved' ? '✓ Saved'
               : saveStatus === 'error' ? '✗ Error saving'
               : 'Saving...'}
+          </div>
+        )}
+      </div>
+
+      {/* Enabled Criteria Section */}
+      <div className="mb-6 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+          Enabled Scoring Criteria
+        </h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Toggle which criteria to include in opportunity scoring. Disabled criteria will not affect scores.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[
+            { key: 'upvotes', label: '🔼 Upvotes', desc: 'Community validation via upvotes' },
+            { key: 'mentions', label: '📢 Mentions', desc: 'Frequency of mentions across sources' },
+            { key: 'revenue_proof', label: '💰 Revenue Proof', desc: 'Competitor revenue/MRR data' },
+            { key: 'competition', label: '⚔️ Competition', desc: 'Number of existing competitors' },
+            { key: 'build_complexity', label: '🔧 Build Complexity', desc: 'Technical complexity assessment' },
+            { key: 'b2b_focus', label: '🏢 B2B Focus', desc: 'Business-to-business market focus' },
+            { key: 'engagement_signals', label: '💬 Engagement', desc: 'Comments, shares, interactions' },
+          ].map((criterion) => (
+            <label
+              key={criterion.key}
+              className="flex items-start space-x-3 p-3 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={localCriteria[criterion.key] ?? true}
+                onChange={(e) => {
+                  setLocalCriteria({ ...localCriteria, [criterion.key]: e.target.checked });
+                  setSaveStatus('idle');
+                }}
+                className="mt-1 w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+              />
+              <div>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">
+                  {criterion.label}
+                </span>
+                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                  {criterion.desc}
+                </span>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <button
+            onClick={() => criteriaMutation.mutate(localCriteria)}
+            disabled={criteriaMutation.isPending}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+          >
+            {criteriaMutation.isPending ? 'Saving...' : 'Save Criteria'}
+          </button>
+        </div>
+
+        {/* Upvote Info (shown when upvotes enabled) */}
+        {localCriteria.upvotes !== false && (
+          <div className="mt-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+            <h4 className="text-sm font-semibold text-green-800 dark:text-green-300 mb-2">
+              Upvote Validation Details
+            </h4>
+            <p className="text-xs text-green-700 dark:text-green-400 mb-2">
+              Upvotes indicate community validation - each upvote represents another person with the same pain point.
+            </p>
+            <div className="grid grid-cols-3 gap-2 text-xs text-green-700 dark:text-green-400">
+              <div><strong>10+</strong> Initial validation</div>
+              <div><strong>50+</strong> Strong validation</div>
+              <div><strong>100+</strong> Validated market</div>
+            </div>
           </div>
         )}
       </div>
