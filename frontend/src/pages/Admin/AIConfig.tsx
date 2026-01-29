@@ -70,10 +70,16 @@ export default function AIConfig() {
   });
 
   // Test AI connection mutation
+  const [testError, setTestError] = useState<string | null>(null);
   const testAI = useMutation({
     mutationFn: async () => {
+      setTestError(null);
       const response = await apiClient.post('/api/v1/admin/ai/test');
       return response.data.data;
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.error || error?.message || 'Test request failed';
+      setTestError(msg);
     },
   });
 
@@ -320,6 +326,18 @@ export default function AIConfig() {
                 : 'text-red-700 dark:text-red-400'
             }`}>
               {testAI.data.message}
+            </p>
+          </div>
+        )}
+
+        {/* Test Error Display (network/server errors) */}
+        {!testAI.data && testError && (
+          <div className="mt-4 p-4 rounded-lg border bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800">
+            <p className="text-sm font-medium text-red-800 dark:text-red-300">
+              Request Failed
+            </p>
+            <p className="mt-1 text-sm text-red-700 dark:text-red-400">
+              {testError}
             </p>
           </div>
         )}
