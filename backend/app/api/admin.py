@@ -844,6 +844,9 @@ def get_filter_rules():
         JSON response with filter rules
     """
     try:
+        import copy
+        from datetime import UTC, datetime
+
         from app.db import SessionLocal
         from app.models import SystemSettings
 
@@ -888,10 +891,15 @@ def get_filter_rules():
             }
 
             if settings and settings.value:
-                rules = settings.value
-                # Ensure signal_phrases exists (migrate old rules)
+                # Deep copy to avoid mutating the SQLAlchemy-tracked object
+                rules = copy.deepcopy(settings.value)
+                # Seed signal_phrases with defaults if missing (first-time migration)
                 if 'signal_phrases' not in rules:
                     rules['signal_phrases'] = default_rules['signal_phrases']
+                    # Persist the migration so add/remove work correctly
+                    settings.value = rules
+                    settings.updated_at = datetime.now(UTC)
+                    db.commit()
             else:
                 rules = default_rules
 
@@ -968,9 +976,11 @@ def add_exclusion_rule():
         JSON response confirming addition
     """
     try:
+        import copy
+        from datetime import UTC, datetime
+
         from app.db import SessionLocal
         from app.models import SystemSettings
-        from datetime import UTC, datetime
 
         data = request.get_json()
         keyword = data.get('keyword', '').strip().lower()
@@ -986,15 +996,17 @@ def add_exclusion_rule():
             ).first()
 
             if settings:
-                rules = settings.value
+                # Deep copy to avoid SQLAlchemy reference identity issue
+                rules = copy.deepcopy(settings.value)
             else:
                 rules = {
                     'exclude_keywords': [],
+                    'signal_phrases': [],
                     'require_keywords': [],
                     'min_upvotes': 5,
                     'min_comments': 2,
                     'exclude_categories': [],
-                    'custom_rules': []
+                    'custom_rules': [],
                 }
 
             # Add to exclude_keywords if not already there
@@ -1006,7 +1018,7 @@ def add_exclusion_rule():
                 'type': 'exclude_keyword',
                 'value': keyword,
                 'reason': reason,
-                'added_at': datetime.now(UTC).isoformat()
+                'added_at': datetime.now(UTC).isoformat(),
             })
 
             if settings:
@@ -1043,6 +1055,7 @@ def add_signal_phrase():
         JSON response confirming addition
     """
     try:
+        import copy
         from datetime import UTC, datetime
 
         from app.db import SessionLocal
@@ -1062,7 +1075,8 @@ def add_signal_phrase():
             ).first()
 
             if settings:
-                rules = settings.value
+                # Deep copy to break SQLAlchemy reference identity
+                rules = copy.deepcopy(settings.value)
             else:
                 rules = {
                     'exclude_keywords': [],
@@ -1119,6 +1133,7 @@ def remove_signal_phrase():
         JSON response confirming removal
     """
     try:
+        import copy
         from datetime import UTC, datetime
 
         from app.db import SessionLocal
@@ -1139,7 +1154,8 @@ def remove_signal_phrase():
             if not settings:
                 return jsonify({'error': 'No filter rules configured'}), 404
 
-            rules = settings.value
+            # Deep copy to break SQLAlchemy reference identity
+            rules = copy.deepcopy(settings.value)
             signals = rules.get('signal_phrases', [])
 
             # Remove matching phrase (handle both dict and string entries)
