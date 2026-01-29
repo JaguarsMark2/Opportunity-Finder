@@ -418,7 +418,6 @@ def update_opportunity(opportunity_id: str):
 
 
 @opportunities_bp.route('/stats', methods=['GET'])
-@jwt_required()
 @rate_limit(limit=10, period=60)
 def get_stats():
     """Get opportunity statistics summary.

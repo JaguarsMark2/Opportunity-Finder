@@ -17,6 +17,19 @@ def run_ui_checks(cfg, report):
     driver = make_driver(cfg["headless"], cfg["timeouts"]["page_load"])
     try:
         f = cfg["frontend_url"].rstrip("/")
+
+        # Warn if frontend appears to be down
+        try:
+            driver.set_page_load_timeout(5)
+            driver.get(f)
+            # If we get here without exception, server is running
+            report.pass_("Frontend server is running")
+        except Exception as e:
+            report.fail("Frontend server is running", f"Cannot connect to {f}: {str(e)[:100]}")
+            return  # Cannot continue UI tests if frontend is down
+
+        # Reset to configured timeout
+        driver.set_page_load_timeout(cfg["timeouts"]["page_load"])
         driver.get(f)
         time.sleep(cfg["timeouts"]["sleep_short"])
         report.pass_("UI homepage loads")

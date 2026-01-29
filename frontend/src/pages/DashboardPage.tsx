@@ -75,25 +75,6 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-slate-200">
-      {/* Header */}
-      <header className="sticky top-0 z-[100] border-b border-slate-700/50 bg-slate-900/80 backdrop-blur-md">
-        <div className="max-w-[1400px] mx-auto px-8 py-6 flex justify-between items-center flex-wrap gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
-              <Target size={24} className="text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-extrabold bg-gradient-to-br from-white to-slate-300 bg-clip-text text-transparent tracking-tight">
-                Opportunity Finder
-              </h1>
-              <p className="text-sm text-slate-400 mt-1">
-                Systematic validation of micro-SaaS opportunities
-              </p>
-            </div>
-          </div>
-        </div>
-      </header>
-
       {/* Stats Bar */}
       <div className="max-w-[1400px] mx-auto px-8 mt-8">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">

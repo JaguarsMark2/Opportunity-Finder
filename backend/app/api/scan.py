@@ -64,7 +64,6 @@ def trigger_scan():
 
 
 @scan_bp.route('/<scan_id>', methods=['GET'])
-@jwt_required()
 @rate_limit(limit=30, period=60)
 def get_scan_progress(scan_id: str):
     """Get scan progress by ID.
@@ -108,7 +107,6 @@ def get_scan_progress(scan_id: str):
 
 
 @scan_bp.route('/recent', methods=['GET'])
-@jwt_required()
 @admin_required
 @rate_limit(limit=10, period=60)
 def get_recent_scans():
@@ -154,7 +152,6 @@ def get_recent_scans():
 
 
 @scan_bp.route('/stats', methods=['GET'])
-@jwt_required()
 @admin_required
 @rate_limit(limit=10, period=60)
 def get_scan_stats():

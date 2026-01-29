@@ -121,6 +121,26 @@ score = (
 
 **Validation Threshold**: Score > 60 = Worth building MVP
 
+## Upvotes as Validation Criteria
+
+**Critical**: Posts with upvotes are prioritized because upvotes serve as community validation of the request. When users upvote a post asking for a tool, service, product, or software, they're explicitly confirming:
+
+1. **They have this problem too** - Each upvote represents another person with the same pain point
+2. **Willingness to engage** - Upvoters are interested enough in a solution to take action
+3. **Market demand validation** - Higher upvotes = larger addressable market
+4. **Quality signal** - The community has vetted this as a legitimate need, not noise
+
+**Upvote Thresholds**:
+- 10+ upvotes = Initial validation (worth investigating)
+- 50+ upvotes = Strong validation (build MVP priority)
+- 100+ upvotes = Validated market (fast-track to development)
+
+**Sources with Upvote Data**:
+- Reddit (upvotes visible)
+- Hacker News (points visible)
+- Indie Hackers (upvotes visible)
+- Product Hunt (upvotes visible)
+
 ## Implementation Blueprint Template
 
 For each validated opportunity, the tool generates:

@@ -17,8 +17,9 @@ Comprehensive API tests including:
 - Input validation
 - Rate limit behavior
 - Authorization bypass detection
+- User tracking workflows (status transitions, notes, isolation)
 
-Total: 36+ tests covering all major API endpoints
+Total: 42+ tests covering all major API endpoints
 """
 
 import time
@@ -28,6 +29,18 @@ import requests
 
 def run_api_checks(cfg, report):
     base = cfg["backend_url"].rstrip("/")
+
+    # Warn if backend appears to be down
+    try:
+        r = requests.get(f"{base}/health", timeout=5)
+        if r.status_code == 200:
+            report.pass_("Backend server is running")
+        else:
+            report.fail("Backend server is running", f"health endpoint returned {r.status_code}")
+    except requests.exceptions.ConnectionError:
+        report.fail("Backend server is running", "Connection refused - backend may not be started")
+    except Exception as e:
+        report.fail("Backend server is running", f"Cannot connect: {e}")
 
     def check(name, fn):
         try:
@@ -885,6 +898,289 @@ def run_api_checks(cfg, report):
                 raise Exception(f"dashboard missing section: {section}")
 
     check("GET /api/v1/dashboard returns aggregated data", dashboard_endpoint_check)
+
+    # =========================================================================
+    # SECTION 14: USER TRACKING - STATUS TRANSITIONS
+    # =========================================================================
+
+    def status_transitions_check():
+        """Test all valid status values for opportunity tracking."""
+        email = f"qa-status-trans-{uuid.uuid4().hex[:8]}@example.com"
+        pw = cfg["smoke_user_password"]
+
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"login failed: {r.text[:200]}")
+
+        token = r.json().get("access_token")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Get first opportunity ID
+        r = requests.get(f"{base}/api/v1/opportunities?limit=1", headers=headers, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"opportunities list for status transitions failed: {r.text[:200]}")
+
+        data = r.json()
+        if "data" not in data or not data["data"]:
+            report.note("No opportunities found to test status transitions - skipping")
+            return
+
+        opp_id = data["data"][0]["id"]
+
+        # Test all valid statuses
+        valid_statuses = ["new", "researching", "building", "rejected", "interested"]
+        for status in valid_statuses:
+            r = requests.patch(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, json={"status": status}, timeout=20)
+            if r.status_code == 500:
+                raise Exception(f"500 on status update to '{status}': {r.text[:200]}")
+            if r.status_code not in (200, 404):
+                raise Exception(f"status update to '{status}' expected 200/404 got {r.status_code}: {r.text[:200]}")
+            if r.status_code == 200:
+                status_data = r.json()
+                if status_data.get("user_status") != status:
+                    raise Exception(f"status not updated to '{status}', got: {status_data.get('user_status')}")
+
+        report.note(f"All status transitions successful: {valid_statuses}")
+
+    check("PATCH opportunity with all valid statuses works", status_transitions_check)
+
+    # =========================================================================
+    # SECTION 15: USER TRACKING - NOTES UPDATE
+    # =========================================================================
+
+    def notes_update_check():
+        """Test updating user notes on an opportunity."""
+        email = f"qa-notes-{uuid.uuid4().hex[:8]}@example.com"
+        pw = cfg["smoke_user_password"]
+
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"login failed: {r.text[:200]}")
+
+        token = r.json().get("access_token")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Get first opportunity ID
+        r = requests.get(f"{base}/api/v1/opportunities?limit=1", headers=headers, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"opportunities list for notes check failed: {r.text[:200]}")
+
+        data = r.json()
+        if "data" not in data or not data["data"]:
+            report.note("No opportunities found to test notes - skipping")
+            return
+
+        opp_id = data["data"][0]["id"]
+
+        # Test setting notes
+        test_note = f"QA test note {uuid.uuid4().hex[:8]}"
+        r = requests.patch(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, json={"notes": test_note}, timeout=20)
+        if r.status_code == 500:
+            raise Exception(f"500 on notes update: {r.text[:200]}")
+        if r.status_code not in (200, 404):
+            raise Exception(f"notes update expected 200/404 got {r.status_code}: {r.text[:200]}")
+
+        if r.status_code == 200:
+            notes_data = r.json()
+            if notes_data.get("user_notes") != test_note:
+                raise Exception(f"notes not saved correctly, expected: {test_note}, got: {notes_data.get('user_notes')}")
+
+            # Verify notes persist by getting the opportunity detail
+            r = requests.get(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, timeout=20)
+            if r.status_code == 200:
+                opp_detail = r.json()
+                if opp_detail.get("user_notes") != test_note:
+                    raise Exception(f"notes not persisted in GET /opportunities/<id>, expected: {test_note}, got: {opp_detail.get('user_notes')}")
+
+        report.note(f"Notes update and persistence verified: {test_note[:30]}...")
+
+    check("PATCH opportunity with notes persists correctly", notes_update_check)
+
+    # =========================================================================
+    # SECTION 16: USER TRACKING - OPPORTUNITY DETAIL VIEW
+    # =========================================================================
+
+    def opportunity_detail_check():
+        """Test GET /api/v1/opportunities/<id> returns user tracking data."""
+        email = f"qa-detail-{uuid.uuid4().hex[:8]}@example.com"
+        pw = cfg["smoke_user_password"]
+
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"login failed: {r.text[:200]}")
+
+        token = r.json().get("access_token")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Get first opportunity ID
+        r = requests.get(f"{base}/api/v1/opportunities?limit=1", headers=headers, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"opportunities list for detail check failed: {r.text[:200]}")
+
+        data = r.json()
+        if "data" not in data or not data["data"]:
+            report.note("No opportunities found to test detail view - skipping")
+            return
+
+        opp_id = data["data"][0]["id"]
+
+        # Set tracking data first
+        r = requests.patch(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, json={"status": "interested", "notes": "test notes", "is_saved": True}, timeout=20)
+
+        # Get opportunity detail
+        r = requests.get(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, timeout=20)
+        if r.status_code == 500:
+            raise Exception(f"500 on opportunity detail: {r.text[:200]}")
+        if r.status_code != 200:
+            raise Exception(f"opportunity detail expected 200 got {r.status_code}: {r.text[:200]}")
+
+        opp_detail = r.json()
+        required_tracking_fields = ["user_status", "user_notes", "is_saved"]
+        for field in required_tracking_fields:
+            if field not in opp_detail:
+                raise Exception(f"opportunity detail missing tracking field: {field}")
+
+        # Verify values match
+        if opp_detail.get("user_status") != "interested":
+            raise Exception(f"user_status mismatch: expected 'interested', got {opp_detail.get('user_status')}")
+        if opp_detail.get("user_notes") != "test notes":
+            raise Exception(f"user_notes mismatch: expected 'test notes', got {opp_detail.get('user_notes')}")
+        if opp_detail.get("is_saved") != True:
+            raise Exception(f"is_saved mismatch: expected True, got {opp_detail.get('is_saved')}")
+
+        report.note(f"Opportunity detail includes all tracking data: user_status={opp_detail.get('user_status')}, is_saved={opp_detail.get('is_saved')}")
+
+    check("GET /api/v1/opportunities/<id> includes user tracking data", opportunity_detail_check)
+
+    # =========================================================================
+    # SECTION 17: USER TRACKING - CROSS-USER ISOLATION
+    # =========================================================================
+
+    def cross_user_isolation_check():
+        """Test that users cannot access each other's tracked opportunities."""
+        # Create first user and track an opportunity
+        email1 = f"qa-iso1-{uuid.uuid4().hex[:8]}@example.com"
+        pw = cfg["smoke_user_password"]
+
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email1, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email1, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"user1 login failed: {r.text[:200]}")
+
+        token1 = r.json().get("access_token")
+        headers1 = {"Authorization": f"Bearer {token1}"}
+
+        # Get and track an opportunity
+        r = requests.get(f"{base}/api/v1/opportunities?limit=1", headers=headers1, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"user1 opportunities list failed: {r.text[:200]}")
+
+        data = r.json()
+        if "data" not in data or not data["data"]:
+            report.note("No opportunities found to test cross-user isolation - skipping")
+            return
+
+        opp_id = data["data"][0]["id"]
+        private_note = f"Private note for {email1}"
+
+        r = requests.patch(f"{base}/api/v1/opportunities/{opp_id}", headers=headers1, json={"notes": private_note, "status": "interested"}, timeout=20)
+
+        # Create second user
+        email2 = f"qa-iso2-{uuid.uuid4().hex[:8]}@example.com"
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email2, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email2, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"user2 login failed: {r.text[:200]}")
+
+        token2 = r.json().get("access_token")
+        headers2 = {"Authorization": f"Bearer {token2}"}
+
+        # User2 should NOT see user1's tracking data
+        r = requests.get(f"{base}/api/v1/opportunities/{opp_id}", headers=headers2, timeout=20)
+        if r.status_code == 500:
+            raise Exception(f"500 on user2 opportunity detail: {r.text[:200]}")
+        if r.status_code != 200:
+            raise Exception(f"user2 opportunity detail expected 200 got {r.status_code}: {r.text[:200]}")
+
+        opp_detail = r.json()
+        # User2 should see empty/null tracking data, not user1's data
+        if opp_detail.get("user_notes") == private_note:
+            raise Exception(f"CROSS-USER DATA LEAK: user2 can see user1's private notes")
+        if opp_detail.get("user_status") == "interested":
+            # This could be a coincidence, but combined with notes it's a leak
+            # Just warn about it
+            report.note(f"WARNING: user2 sees user_status='interested' - verify this is not a data leak")
+
+        # User2's saved list should not include the opportunity user1 saved
+        r = requests.get(f"{base}/api/v1/user/saved", headers=headers2, timeout=20)
+        if r.status_code == 200:
+            saved_data = r.json()
+            if "data" in saved_data:
+                saved_ids = [item.get("id") for item in saved_data["data"]]
+                if opp_id in saved_ids:
+                    raise Exception(f"CROSS-USER DATA LEAK: user2 can see user1's saved opportunities")
+
+        report.note("Cross-user isolation verified: users cannot see each other's tracking data")
+
+    check("Users are isolated from each other's tracking data", cross_user_isolation_check)
+
+    # =========================================================================
+    # SECTION 18: USER TRACKING - NOTES IN SAVED LIST
+    # =========================================================================
+
+    def notes_in_saved_check():
+        """Test that GET /user/saved includes notes for saved opportunities."""
+        email = f"qa-saved-notes-{uuid.uuid4().hex[:8]}@example.com"
+        pw = cfg["smoke_user_password"]
+
+        r = requests.post(f"{base}/api/v1/auth/register", json={"email": email, "password": pw}, timeout=20)
+        r = requests.post(f"{base}/api/v1/auth/login", json={"email": email, "password": pw}, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"login failed: {r.text[:200]}")
+
+        token = r.json().get("access_token")
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Get and save an opportunity with notes
+        r = requests.get(f"{base}/api/v1/opportunities?limit=1", headers=headers, timeout=20)
+        if r.status_code != 200:
+            raise Exception(f"opportunities list for saved notes check failed: {r.text[:200]}")
+
+        data = r.json()
+        if "data" not in data or not data["data"]:
+            report.note("No opportunities found to test saved notes - skipping")
+            return
+
+        opp_id = data["data"][0]["id"]
+        test_note = f"Saved note {uuid.uuid4().hex[:8]}"
+
+        r = requests.patch(f"{base}/api/v1/opportunities/{opp_id}", headers=headers, json={"notes": test_note, "is_saved": True}, timeout=20)
+        if r.status_code not in (200, 404):
+            report.note(f"Could not save opportunity for notes test: {r.status_code}")
+            return
+
+        # Get saved list
+        r = requests.get(f"{base}/api/v1/user/saved", headers=headers, timeout=20)
+        if r.status_code == 500:
+            raise Exception(f"500 on user saved with notes: {r.text[:200]}")
+        if r.status_code != 200:
+            raise Exception(f"user saved with notes expected 200 got {r.status_code}: {r.text[:200]}")
+
+        saved_data = r.json()
+        # Note: The saved list may not include notes in current implementation
+        # This test documents expected behavior
+        if "data" in saved_data and saved_data["data"]:
+            # Check if notes are included (may be optional)
+            first_saved = saved_data["data"][0]
+            if "notes" in first_saved or "user_notes" in first_saved:
+                report.note("Saved list includes notes field")
+            else:
+                report.note("Saved list does not include notes (documented behavior)")
+
+    check("GET /user/saved response structure verified", notes_in_saved_check)
 
 
 def _expect_200(url):

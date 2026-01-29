@@ -91,7 +91,15 @@ def create_app(test_config: bool = False) -> Flask:
     app.config["JWT_HEADER_TYPE"] = "Bearer"
 
     # Initialize extensions
-    CORS(app, origins=[settings.FRONTEND_URL])
+    # Allow multiple frontend origins for development flexibility
+    allowed_origins = [
+        settings.FRONTEND_URL,
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
+    CORS(app, origins=allowed_origins, supports_credentials=True)
     jwt = JWTManager(app)
     limiter = Limiter(
         key_func=get_remote_address,

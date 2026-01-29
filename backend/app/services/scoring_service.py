@@ -1,10 +1,24 @@
 """Scoring service for calculating opportunity scores.
 
 Implements admin-configurable scoring algorithm with 4 weighted criteria:
-- Demand Frequency (25%): Based on mention count
+- Demand Frequency (25%): Based on mention count and upvotes
 - Revenue Proof (35%): Based on competitor revenue data
 - Competition (20%): Inverted - fewer competitors is better
 - Build Complexity (20%): Lower complexity is better
+
+UPVOTE VALIDATION CRITERIA:
+Posts with upvotes are prioritized because upvotes serve as community validation:
+- Each upvote represents another person with the same pain point
+- Upvoters are interested enough to take action (not passive)
+- Higher upvotes = larger addressable market
+- Community has vetted this as a legitimate need, not noise
+
+Upvote Thresholds:
+- 10+ upvotes = Initial validation (worth investigating)
+- 50+ upvotes = Strong validation (build MVP priority)
+- 100+ upvotes = Validated market (fast-track to development)
+
+Sources with Upvote Data: Reddit, Hacker News, Indie Hackers, Product Hunt
 """
 
 import math
@@ -39,6 +53,17 @@ class ScoringService:
         'min_competitors': 1
     }
 
+    # Enabled criteria (admin-configurable - which criteria to use)
+    DEFAULT_ENABLED_CRITERIA = {
+        'upvotes': True,           # Include upvote validation
+        'mentions': True,          # Include mention count
+        'revenue_proof': True,     # Include competitor revenue data
+        'competition': True,       # Include competitor count analysis
+        'build_complexity': True,  # Include complexity assessment
+        'b2b_focus': True,         # Include B2B focus check
+        'engagement_signals': True, # Include comments, shares, etc.
+    }
+
     def __init__(self, db: Session):
         """Initialize scoring service.
 
@@ -48,6 +73,7 @@ class ScoringService:
         self.db = db
         self.weights = self._load_weights()
         self.thresholds = self._load_thresholds()
+        self.enabled_criteria = self._load_enabled_criteria()
 
     def _load_weights(self) -> dict[str, float]:
         """Load scoring weights from database or use defaults.
@@ -77,6 +103,20 @@ class ScoringService:
             return settings.value
         return self.DEFAULT_THRESHOLDS.copy()
 
+    def _load_enabled_criteria(self) -> dict[str, bool]:
+        """Load enabled criteria from database or use defaults.
+
+        Returns:
+            Dict of criterion -> enabled status
+        """
+        settings = self.db.query(SystemSettings).filter(
+            SystemSettings.key == 'enabled_criteria'
+        ).first()
+
+        if settings and settings.value:
+            return settings.value
+        return self.DEFAULT_ENABLED_CRITERIA.copy()
+
     def update_weights(self, weights: dict[str, float]) -> dict[str, Any]:
         """Update scoring weights in database.
 
@@ -101,8 +141,7 @@ class ScoringService:
         else:
             settings = SystemSettings(
                 key='scoring_weights',
-                value=weights,
-                description='Scoring algorithm weights'
+                value=weights
             )
             self.db.add(settings)
 
@@ -130,8 +169,7 @@ class ScoringService:
         else:
             settings = SystemSettings(
                 key='validation_thresholds',
-                value=thresholds,
-                description='Validation criteria thresholds'
+                value=thresholds
             )
             self.db.add(settings)
 
@@ -139,6 +177,34 @@ class ScoringService:
         self.thresholds = thresholds
 
         return thresholds
+
+    def update_enabled_criteria(self, criteria: dict[str, bool]) -> dict[str, bool]:
+        """Update enabled scoring criteria in database.
+
+        Args:
+            criteria: Dict of criterion -> enabled status
+
+        Returns:
+            Updated enabled criteria
+        """
+        # Update in database
+        settings = self.db.query(SystemSettings).filter(
+            SystemSettings.key == 'enabled_criteria'
+        ).first()
+
+        if settings:
+            settings.value = criteria
+        else:
+            settings = SystemSettings(
+                key='enabled_criteria',
+                value=criteria
+            )
+            self.db.add(settings)
+
+        self.db.commit()
+        self.enabled_criteria = criteria
+
+        return criteria
 
     def calculate_score(self, opportunity: Opportunity) -> dict[str, Any]:
         """Calculate score for an opportunity.
@@ -504,9 +570,10 @@ class ScoringService:
         """Get current scoring configuration.
 
         Returns:
-            Current weights and thresholds
+            Current weights, thresholds, and enabled criteria
         """
         return {
             'weights': self.weights,
-            'thresholds': self.thresholds
+            'thresholds': self.thresholds,
+            'enabled_criteria': self.enabled_criteria
         }

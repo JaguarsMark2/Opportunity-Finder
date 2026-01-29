@@ -4,6 +4,9 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import apiClient from '../api/client';
 import authService from '../services/authService';
 
+// DEV MODE: Auto-login as admin for development
+const DEV_MODE = true;
+
 interface User {
   id: string;
   email: string;
@@ -44,6 +47,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem('refresh_token');
         localStorage.removeItem('user');
       }
+    } else if (DEV_MODE) {
+      // Dev mode: Auto-set admin user
+      const devUser: User = {
+        id: '1de75072-3eb7-4bdd-a0a0-ff2016b9960b',
+        email: 'admin@local.dev',
+        role: 'admin',
+        subscription_status: 'active',
+        email_verified: true,
+      };
+      setUser(devUser);
+      localStorage.setItem('user', JSON.stringify(devUser));
     }
 
     setIsLoading(false);

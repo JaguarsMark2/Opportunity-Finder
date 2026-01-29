@@ -25,11 +25,16 @@ export default function Header({ darkMode, setDarkMode }: HeaderProps) {
 
           {/* Navigation */}
           <nav className="hidden md:flex items-center space-x-6">
+            <Link to="/dashboard" className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-medium">
+              Dashboard
+            </Link>
             {isAuthenticated ? (
               <>
-                <Link to="/dashboard" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">
-                  Dashboard
-                </Link>
+                {user?.role === 'admin' && (
+                  <Link to="/admin" className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium">
+                    Admin
+                  </Link>
+                )}
                 <Link to="/saved" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400">
                   Saved
                 </Link>

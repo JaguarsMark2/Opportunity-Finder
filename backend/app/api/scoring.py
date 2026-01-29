@@ -13,7 +13,6 @@ scoring_bp = Blueprint('scoring', __name__, url_prefix='/api/v1/scoring')
 
 
 @scoring_bp.route('/opportunity/<opportunity_id>/score', methods=['POST'])
-@jwt_required()
 @rate_limit(limit=30, period=60)
 def score_opportunity(opportunity_id: str):
     """Score a single opportunity.
@@ -40,7 +39,6 @@ def score_opportunity(opportunity_id: str):
 
 
 @scoring_bp.route('/rescore-all', methods=['POST'])
-@jwt_required()
 @admin_required
 @rate_limit(limit=5, period=3600)
 def rescore_all():
@@ -62,7 +60,6 @@ def rescore_all():
 
 
 @scoring_bp.route('/config', methods=['GET'])
-@jwt_required()
 def get_config():
     """Get current scoring configuration.
 
@@ -83,7 +80,6 @@ def get_config():
 
 
 @scoring_bp.route('/weights', methods=['PUT'])
-@jwt_required()
 @admin_required
 def update_weights():
     """Update scoring weights.
@@ -120,7 +116,6 @@ def update_weights():
 
 
 @scoring_bp.route('/thresholds', methods=['PUT'])
-@jwt_required()
 @admin_required
 def update_thresholds():
     """Update validation thresholds.
@@ -154,7 +149,6 @@ def update_thresholds():
 
 
 @scoring_bp.route('/formula', methods=['GET'])
-@jwt_required()
 def get_formula():
     """Get scoring formula documentation.
 

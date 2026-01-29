@@ -88,8 +88,8 @@ def run_scan(self, sources: list | None = None):
     """
     db = self.db
 
-    # Create scan record
-    scan_id = self.request.id
+    # Create scan record - use task ID if available, otherwise generate UUID
+    scan_id = self.request.id if self.request.id else str(uuid.uuid4())
     scan = Scan(
         id=scan_id,
         status='running',
@@ -103,7 +103,18 @@ def run_scan(self, sources: list | None = None):
     self.update_progress(scan_id, 5, 'running', 'Initializing data collection service')
 
     try:
-        # Load collector config from environment
+        # Get enabled sources from database
+        from app.services.data_source_service import DataSourceService
+        source_service = DataSourceService(db)
+        enabled_sources = source_service.get_enabled_sources()
+
+        # If specific sources requested, filter to only those that are enabled
+        if sources:
+            sources = [s for s in sources if s in enabled_sources]
+        else:
+            sources = enabled_sources
+
+        # Load collector config from environment and database
         config = {
             'reddit': {
                 'api_keys': {
@@ -121,10 +132,23 @@ def run_scan(self, sources: list | None = None):
                 'api_keys': {
                     'serpapi_key': os.getenv('SERPAPI_KEY')
                 }
-            }
+            },
+            'bluesky': {
+                'api_keys': {
+                    'identifier': os.getenv('BLUESKY_IDENTIFIER'),
+                    'password': os.getenv('BLUESKY_PASSWORD')
+                }
+            },
+            'mastodon': {
+                'api_keys': {
+                    'access_token': os.getenv('MASTODON_ACCESS_TOKEN'),
+                    'instance': os.getenv('MASTODON_INSTANCE', 'https://mastodon.social')
+                }
+            },
+            'enabled_sources': sources
         }
 
-        self.update_progress(scan_id, 10, 'running', 'Starting data collection')
+        self.update_progress(scan_id, 10, 'running', f'Starting data collection from {len(sources)} sources')
 
         # Run scan
         service = DataCollectorService(db, config)

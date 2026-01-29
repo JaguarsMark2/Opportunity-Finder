@@ -35,12 +35,14 @@ celery_app.conf.update(
     timezone='UTC',
     enable_utc=True,
 
-    # Task routing
-    task_routes={
-        'app.tasks.scan_tasks.run_scan': {'queue': 'scans'},
-        'app.tasks.scan_tasks.score_opportunity': {'queue': 'scoring'},
-        'app.tasks.email_tasks.send_alert_email': {'queue': 'emails'},
-    },
+    # Task routing (disabled for simpler dev setup - all tasks use default queue)
+    # To enable queue separation in production, uncomment and run worker with:
+    # celery -A app.celery_app worker -Q celery,scans,scoring,emails
+    # task_routes={
+    #     'app.tasks.scan_tasks.run_scan': {'queue': 'scans'},
+    #     'app.tasks.scan_tasks.score_opportunity': {'queue': 'scoring'},
+    #     'app.tasks.email_tasks.send_alert_email': {'queue': 'emails'},
+    # },
 
     # Task execution limits
     task_soft_time_limit=1800,  # 30 minutes soft limit

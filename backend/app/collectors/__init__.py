@@ -6,6 +6,8 @@ This package contains collectors for various data sources including:
 - Product Hunt
 - Hacker News
 - Google Trends
+- Bluesky
+- Mastodon
 - Microns (social engagement aggregation)
 
 New collectors can be added by:
@@ -25,9 +27,11 @@ Example:
 
 
 from .base_collector import BaseCollector, CollectorConfig, CollectorResult, register_collector
+from .bluesky_collector import BlueskyCollector
 from .google_trends_collector import GoogleTrendsCollector
 from .hacker_news_collector import HackerNewsCollector
 from .indie_hackers_collector import IndieHackersCollector
+from .mastodon_collector import MastodonCollector
 from .microns_collector import MicronsCollector
 from .product_hunt_collector import ProductHuntCollector
 
@@ -44,6 +48,8 @@ __all__ = [
     'ProductHuntCollector',
     'HackerNewsCollector',
     'GoogleTrendsCollector',
+    'BlueskyCollector',
+    'MastodonCollector',
     'MicronsCollector',
 ]
 

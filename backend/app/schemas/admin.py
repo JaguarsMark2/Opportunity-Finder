@@ -238,6 +238,7 @@ class ScoringConfigResponseSchema(Schema):
     """Schema for scoring configuration response."""
     weights = fields.Dict()
     thresholds = fields.Dict()
+    enabled_criteria = fields.Dict()
     last_updated = fields.DateTime()
     updated_by = fields.Str()
 
