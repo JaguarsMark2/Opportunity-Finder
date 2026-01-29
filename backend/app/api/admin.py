@@ -480,8 +480,10 @@ def get_system_health():
 
         # Check database
         try:
+            from sqlalchemy import text
+
             db = next(get_db())
-            db.execute('SELECT 1')
+            db.execute(text('SELECT 1'))
             health_data['database'] = 'healthy'
         except Exception:
             health_data['database'] = 'unhealthy'
