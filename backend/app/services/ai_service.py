@@ -49,21 +49,32 @@ class AIService:
     SETTINGS_KEY = 'ai_config'
 
     # Default prompts
-    EXTRACT_PAIN_POINT_PROMPT = """Analyze this post and extract the core pain point or need.
+    EXTRACT_OPPORTUNITY_PROMPT = """Analyze this post for market opportunity signals.
 
+Look for ANY of these signal types:
+- Pain points: frustrations, complaints about current tools
+- Feature requests: "I wish", "looking for", "does anyone know a tool that..."
+- Workarounds: "I ended up building", "my hack for this", "wrote a script to..."
+- Integration gaps: "need X to talk to Y", "no way to connect"
+- Manual process complaints: spending hours on repetitive tasks
+- Idea discussions: "someone should build", "why doesn't X exist"
+- Willingness to pay: "I'd pay for", "paying $X/month for a mediocre..."
+- Building in public: someone built a solution, proving the gap exists
+{signal_context}
 Post Title: {title}
 Post Content: {content}
 
 Respond in JSON format:
 {{
     "is_software_opportunity": true/false,
-    "pain_point": "Brief description of the core pain/need (max 50 words)",
-    "opportunity_name": "Short name for a solution (3-6 words, like 'LLM Database Access Manager')",
+    "pain_point": "Brief description of the core need/gap/idea (max 50 words)",
+    "opportunity_name": "Short name for a potential solution (3-6 words, like 'LLM Database Access Manager')",
+    "signal_type": "One of: pain_point, feature_request, workaround, integration_gap, idea, willingness_to_pay, manual_process",
     "category": "One of: developer_tools, productivity, automation, analytics, communication, security, infrastructure, other",
     "rejection_reason": "If not a software opportunity, explain why (otherwise null)"
 }}
 
-Only mark as software opportunity if someone could build a SaaS/tool to solve it.
+Mark as software opportunity if someone could build a SaaS/tool/integration to address it.
 Reject: job posts, political discussions, general questions, hardware issues, non-actionable complaints."""
 
     CLUSTER_PROMPT = """Given these pain points, identify which ones are essentially the same problem.
@@ -326,16 +337,34 @@ Rules:
         data = response.json()
         return data['content'][0]['text']
 
-    def analyze_post(self, title: str, content: str) -> dict[str, Any] | None:
-        """Analyze a single post to extract pain point.
+    def analyze_post(
+        self,
+        title: str,
+        content: str,
+        signal_phrases: str = '',
+    ) -> dict[str, Any] | None:
+        """Analyze a single post for market opportunity signals.
+
+        Args:
+            title: Post title
+            content: Post content (truncated to 2000 chars)
+            signal_phrases: Optional formatted signal phrases to include in prompt
 
         Returns:
-            Dict with pain_point, opportunity_name, category, is_software_opportunity
-            or None if analysis fails
+            Dict with pain_point, opportunity_name, category,
+            is_software_opportunity, signal_type — or None if analysis fails
         """
-        prompt = self.EXTRACT_PAIN_POINT_PROMPT.format(
+        signal_context = ''
+        if signal_phrases:
+            signal_context = (
+                f"\nAlso look for these specific phrases/patterns the user "
+                f"has flagged as important signals: {signal_phrases}\n"
+            )
+
+        prompt = self.EXTRACT_OPPORTUNITY_PROMPT.format(
             title=title,
-            content=content[:2000]  # Limit content length
+            content=content[:2000],
+            signal_context=signal_context,
         )
 
         response = self._call_llm(prompt)

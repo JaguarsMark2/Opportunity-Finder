@@ -13,8 +13,15 @@ interface AIConfigData {
   api_key_masked: string;
 }
 
+interface SignalPhrase {
+  phrase: string;
+  category: string;
+  added_at?: string;
+}
+
 interface FilterRules {
   exclude_keywords: string[];
+  signal_phrases: SignalPhrase[];
   require_keywords: string[];
   min_upvotes: number;
   min_comments: number;
@@ -27,15 +34,47 @@ interface FilterRules {
   }>;
 }
 
+const SIGNAL_CATEGORIES = [
+  { value: 'pain_point', label: 'Pain Point' },
+  { value: 'feature_request', label: 'Feature Request' },
+  { value: 'workaround', label: 'Workaround' },
+  { value: 'integration_gap', label: 'Integration Gap' },
+  { value: 'willingness_to_pay', label: 'Willingness to Pay' },
+  { value: 'idea', label: 'Idea' },
+  { value: 'manual_process', label: 'Manual Process' },
+  { value: '', label: 'General' },
+];
+
+/** Default models per provider. */
+const PROVIDER_MODELS: Record<string, string> = {
+  glm: 'glm-4-flash',
+  openai: 'gpt-4o-mini',
+  anthropic: 'claude-3-haiku-20240307',
+};
+
+/** Default API URLs per provider. */
+const PROVIDER_URLS: Record<string, string> = {
+  glm: 'https://api.z.ai/api/paas/v4/chat/completions',
+  openai: 'https://api.openai.com/v1/chat/completions',
+  anthropic: 'https://api.anthropic.com/v1/messages',
+};
+
 export default function AIConfig() {
   const queryClient = useQueryClient();
   const [newApiKey, setNewApiKey] = useState('');
   const [newExcludeKeyword, setNewExcludeKeyword] = useState('');
   const [excludeReason, setExcludeReason] = useState('');
+  const [newSignalPhrase, setNewSignalPhrase] = useState('');
+  const [signalCategory, setSignalCategory] = useState('');
   const [configError, setConfigError] = useState<string | null>(null);
-  const [modelInput, setModelInput] = useState('');
 
-  // Fetch AI config
+  // Local overrides: null means "display the server value".
+  // Set to a string when the user types something different.
+  const [localModel, setLocalModel] = useState<string | null>(null);
+  const [localUrl, setLocalUrl] = useState<string | null>(null);
+
+  // ── Queries ──────────────────────────────────────────────────────────
+
   const { data: aiConfig, isLoading: aiLoading } = useQuery({
     queryKey: ['ai-config'],
     queryFn: async () => {
@@ -44,14 +83,6 @@ export default function AIConfig() {
     },
   });
 
-  // Sync model input when config loads
-  useEffect(() => {
-    if (aiConfig?.model) {
-      setModelInput(aiConfig.model);
-    }
-  }, [aiConfig?.model]);
-
-  // Fetch filter rules
   const { data: filterRules, isLoading: rulesLoading } = useQuery({
     queryKey: ['filter-rules'],
     queryFn: async () => {
@@ -60,13 +91,48 @@ export default function AIConfig() {
     },
   });
 
-  // Update AI config mutation
+  // Reset local overrides whenever the server value changes (e.g. after
+  // a successful mutation + refetch).  This prevents stale local state
+  // from making the Save button look incorrectly enabled.
+  useEffect(() => { setLocalModel(null); }, [aiConfig?.model]);
+  useEffect(() => { setLocalUrl(null); }, [aiConfig?.api_url]);
+
+  // Computed display values: show local override if the user has typed
+  // something, otherwise show whatever the server returned.
+  const displayModel = localModel ?? aiConfig?.model ?? '';
+  const displayUrl   = localUrl   ?? aiConfig?.api_url ?? '';
+
+  // Whether there are unsaved changes the user can save.
+  const modelChanged = localModel !== null && localModel.trim() !== '' && localModel !== (aiConfig?.model ?? '');
+  const urlChanged   = localUrl   !== null && localUrl.trim()   !== '' && localUrl   !== (aiConfig?.api_url ?? '');
+
+  // ── Mutations ────────────────────────────────────────────────────────
+
   const updateAIConfig = useMutation({
     mutationFn: async (config: Partial<AIConfigData & { api_key?: string }>) => {
       const response = await apiClient.put('/api/v1/admin/ai/config', config);
       return response.data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
+      // Optimistically update the query cache with the values we just
+      // sent so the UI reflects the change instantly (no waiting for
+      // the background refetch to complete).
+      queryClient.setQueryData(['ai-config'], (old: AIConfigData | undefined) => {
+        if (!old) return old;
+        const updated = { ...old };
+        if (variables.provider !== undefined) updated.provider = variables.provider;
+        if (variables.model    !== undefined) updated.model    = variables.model;
+        if (variables.api_url  !== undefined) updated.api_url  = variables.api_url;
+        if (variables.enabled  !== undefined) updated.enabled  = variables.enabled;
+        if (variables.api_key) {
+          // We just saved a key, so mark it as set.
+          updated.api_key_set = true;
+          updated.api_key_masked = '(just saved)';
+        }
+        return updated;
+      });
+      // Trigger a background refetch for server truth (e.g. api_key_set
+      // after provider switch, masked key display, etc.)
       queryClient.invalidateQueries({ queryKey: ['ai-config'] });
       setNewApiKey('');
       setConfigError(null);
@@ -77,7 +143,6 @@ export default function AIConfig() {
     },
   });
 
-  // Test AI connection mutation
   const [testError, setTestError] = useState<string | null>(null);
   const testAI = useMutation({
     mutationFn: async () => {
@@ -91,7 +156,6 @@ export default function AIConfig() {
     },
   });
 
-  // Add exclusion keyword mutation
   const addExclusion = useMutation({
     mutationFn: async ({ keyword, reason }: { keyword: string; reason: string }) => {
       const response = await apiClient.post('/api/v1/admin/filter-rules/add-exclusion', {
@@ -107,7 +171,6 @@ export default function AIConfig() {
     },
   });
 
-  // Update filter rules mutation
   const updateFilterRules = useMutation({
     mutationFn: async (rules: FilterRules) => {
       const response = await apiClient.put('/api/v1/admin/filter-rules', rules);
@@ -117,6 +180,35 @@ export default function AIConfig() {
       queryClient.invalidateQueries({ queryKey: ['filter-rules'] });
     },
   });
+
+  const addSignal = useMutation({
+    mutationFn: async ({ phrase, category }: { phrase: string; category: string }) => {
+      const response = await apiClient.post('/api/v1/admin/filter-rules/add-signal', {
+        phrase,
+        category,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['filter-rules'] });
+      setNewSignalPhrase('');
+      setSignalCategory('');
+    },
+  });
+
+  const removeSignal = useMutation({
+    mutationFn: async (phrase: string) => {
+      const response = await apiClient.post('/api/v1/admin/filter-rules/remove-signal', {
+        phrase,
+      });
+      return response.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['filter-rules'] });
+    },
+  });
+
+  // ── Handlers ─────────────────────────────────────────────────────────
 
   const handleSaveApiKey = () => {
     if (newApiKey.trim()) {
@@ -131,12 +223,32 @@ export default function AIConfig() {
   };
 
   const handleProviderChange = (provider: string) => {
-    const models: Record<string, string> = {
-      glm: 'glm-4',
-      openai: 'gpt-4o-mini',
-      anthropic: 'claude-3-haiku-20240307',
-    };
-    updateAIConfig.mutate({ provider, model: models[provider] || '' });
+    // Clear ALL stale state from the previous provider so the UI
+    // reflects a clean slate for the newly selected provider.
+    setNewApiKey('');
+    setConfigError(null);
+    setLocalModel(null);
+    setLocalUrl(null);
+    testAI.reset();
+    setTestError(null);
+
+    updateAIConfig.mutate({
+      provider,
+      model: PROVIDER_MODELS[provider] || '',
+      api_url: PROVIDER_URLS[provider] || '',
+    });
+  };
+
+  const handleSaveModel = () => {
+    if (localModel && localModel.trim()) {
+      updateAIConfig.mutate({ model: localModel.trim() });
+    }
+  };
+
+  const handleSaveUrl = () => {
+    if (localUrl && localUrl.trim()) {
+      updateAIConfig.mutate({ api_url: localUrl.trim() });
+    }
   };
 
   const handleAddExclusion = () => {
@@ -166,6 +278,18 @@ export default function AIConfig() {
       updateFilterRules.mutate({ ...filterRules, min_comments: value });
     }
   };
+
+  const handleAddSignalPhrase = () => {
+    if (newSignalPhrase.trim()) {
+      addSignal.mutate({ phrase: newSignalPhrase.trim(), category: signalCategory });
+    }
+  };
+
+  const handleRemoveSignalPhrase = (phrase: string) => {
+    removeSignal.mutate(phrase);
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────
 
   if (aiLoading || rulesLoading) {
     return (
@@ -203,11 +327,12 @@ export default function AIConfig() {
               <button
                 key={provider}
                 onClick={() => handleProviderChange(provider)}
+                disabled={updateAIConfig.isPending}
                 className={`px-4 py-2 rounded-lg font-medium transition-colors ${
                   aiConfig?.provider === provider
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
+                } disabled:opacity-50`}
               >
                 {provider === 'glm' ? 'GLM (Zhipu)' : provider === 'openai' ? 'OpenAI' : 'Anthropic'}
               </button>
@@ -226,7 +351,7 @@ export default function AIConfig() {
         {/* API Key */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            API Key
+            API Key ({aiConfig?.provider?.toUpperCase() || 'provider'})
           </label>
           <div className="flex gap-3">
             <input
@@ -241,12 +366,16 @@ export default function AIConfig() {
               disabled={!newApiKey.trim() || updateAIConfig.isPending}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {updateAIConfig.isPending ? 'Saving...' : 'Save Key'}
+              Save Key
             </button>
           </div>
-          {aiConfig?.api_key_set && (
+          {aiConfig?.api_key_set ? (
             <p className="mt-1 text-sm text-green-600 dark:text-green-400">
-              API key is configured
+              API key is configured for {aiConfig.provider?.toUpperCase()}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-yellow-600 dark:text-yellow-400">
+              No API key saved for {aiConfig?.provider?.toUpperCase() || 'this provider'}
             </p>
           )}
         </div>
@@ -260,14 +389,14 @@ export default function AIConfig() {
             <input
               type="text"
               list="model-suggestions"
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
-              placeholder="e.g. glm-4, glm-4v, gpt-4o-mini"
+              value={displayModel}
+              onChange={(e) => setLocalModel(e.target.value)}
+              placeholder="e.g. glm-4.7, gpt-4o-mini"
               className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <button
-              onClick={() => { if (modelInput.trim()) updateAIConfig.mutate({ model: modelInput.trim() }); }}
-              disabled={!modelInput.trim() || modelInput === aiConfig?.model || updateAIConfig.isPending}
+              onClick={handleSaveModel}
+              disabled={!modelChanged || updateAIConfig.isPending}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Save Model
@@ -275,31 +404,65 @@ export default function AIConfig() {
             <datalist id="model-suggestions">
               {aiConfig?.provider === 'glm' && (
                 <>
-                  <option value="glm-4" />
-                  <option value="glm-4-plus" />
-                  <option value="glm-4-flash" />
-                  <option value="glm-4-long" />
-                  <option value="glm-4-0520" />
+                  <option value="glm-4.7" label="GLM-4.7 — latest flagship" />
+                  <option value="glm-4.7-flash" label="GLM-4.7-Flash — lightweight 30B" />
+                  <option value="glm-4.5" label="GLM-4.5 — previous flagship" />
+                  <option value="glm-4.5-air" label="GLM-4.5-Air — compact" />
+                  <option value="glm-4.5-flash" label="GLM-4.5-Flash — FREE tier" />
+                  <option value="glm-4" label="GLM-4 — legacy" />
+                  <option value="glm-4-plus" label="GLM-4-Plus — legacy enhanced" />
+                  <option value="glm-4-flash" label="GLM-4-Flash — legacy lightweight" />
+                  <option value="glm-4-air" label="GLM-4-Air — legacy compact" />
+                  <option value="glm-4-long" label="GLM-4-Long — legacy long-context" />
                 </>
               )}
               {aiConfig?.provider === 'openai' && (
                 <>
-                  <option value="gpt-4o-mini" />
-                  <option value="gpt-4o" />
-                  <option value="gpt-4-turbo" />
+                  <option value="gpt-4o-mini" label="GPT-4o Mini — fast & cheap" />
+                  <option value="gpt-4o" label="GPT-4o — flagship multimodal" />
+                  <option value="gpt-4-turbo" label="GPT-4 Turbo — previous gen" />
+                  <option value="o3-mini" label="o3-mini — reasoning" />
                 </>
               )}
               {aiConfig?.provider === 'anthropic' && (
                 <>
-                  <option value="claude-3-haiku-20240307" />
-                  <option value="claude-3-5-sonnet-20241022" />
-                  <option value="claude-3-5-haiku-20241022" />
+                  <option value="claude-sonnet-4-20250514" label="Claude Sonnet 4 — balanced" />
+                  <option value="claude-haiku-4-20250514" label="Claude Haiku 4 — fast & cheap" />
+                  <option value="claude-3-5-sonnet-20241022" label="Claude 3.5 Sonnet — previous gen" />
+                  <option value="claude-3-5-haiku-20241022" label="Claude 3.5 Haiku — previous gen fast" />
+                  <option value="claude-3-haiku-20240307" label="Claude 3 Haiku — cheapest" />
                 </>
               )}
             </datalist>
           </div>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Type any model name your API key supports. Suggestions provided as hints.
+          </p>
+        </div>
+
+        {/* API URL */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            API URL
+          </label>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={displayUrl}
+              onChange={(e) => setLocalUrl(e.target.value)}
+              placeholder="API endpoint URL"
+              className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <button
+              onClick={handleSaveUrl}
+              disabled={!urlChanged || updateAIConfig.isPending}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              Save URL
+            </button>
+          </div>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Auto-set when switching providers. GLM: api.z.ai (international) or open.bigmodel.cn (China only).
           </p>
         </div>
 
@@ -362,11 +525,97 @@ export default function AIConfig() {
         )}
       </div>
 
+      {/* Signal Phrases Section */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+          Signal Phrases
+        </h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Words and phrases that indicate a market opportunity. Posts containing these get
+          priority — they bypass engagement thresholds and guide the AI analysis.
+        </p>
+
+        {/* Add Signal Phrase */}
+        <div className="mb-6">
+          <div className="flex gap-3 mb-2">
+            <input
+              type="text"
+              value={newSignalPhrase}
+              onChange={(e) => setNewSignalPhrase(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddSignalPhrase()}
+              placeholder='e.g. "I wish", "looking for a tool", "no way to"...'
+              className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+            />
+            <select
+              value={signalCategory}
+              onChange={(e) => setSignalCategory(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+            >
+              {SIGNAL_CATEGORIES.map((cat) => (
+                <option key={cat.value} value={cat.value}>
+                  {cat.label}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleAddSignalPhrase}
+              disabled={!newSignalPhrase.trim() || addSignal.isPending}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add Signal
+            </button>
+          </div>
+        </div>
+
+        {/* Current Signal Phrases */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Active Signal Phrases ({filterRules?.signal_phrases?.length || 0})
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {filterRules?.signal_phrases?.map((sp) => {
+              const phrase = typeof sp === 'string' ? sp : sp.phrase;
+              const category = typeof sp === 'string' ? '' : sp.category;
+              return (
+                <span
+                  key={phrase}
+                  className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300"
+                  title={category ? `Category: ${category}` : undefined}
+                >
+                  {phrase}
+                  {category && (
+                    <span className="text-xs opacity-60 ml-1">
+                      ({category.replace('_', ' ')})
+                    </span>
+                  )}
+                  <button
+                    onClick={() => handleRemoveSignalPhrase(phrase)}
+                    disabled={removeSignal.isPending}
+                    className="ml-1 hover:text-green-600 disabled:opacity-50"
+                  >
+                    x
+                  </button>
+                </span>
+              );
+            })}
+            {(!filterRules?.signal_phrases || filterRules.signal_phrases.length === 0) && (
+              <p className="text-sm text-gray-400 dark:text-gray-500 italic">
+                No signal phrases configured. Add phrases to help identify opportunity signals.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Filtering Rules Section */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-          Filtering Rules
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+          Exclusion Rules
         </h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+          Keywords to reject and minimum engagement thresholds. Posts with signal phrases
+          bypass engagement thresholds but exclusion keywords are always enforced.
+        </p>
 
         {/* Minimum Thresholds */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -408,6 +657,7 @@ export default function AIConfig() {
               type="text"
               value={newExcludeKeyword}
               onChange={(e) => setNewExcludeKeyword(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddExclusion()}
               placeholder="Keyword to exclude..."
               className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
             />
@@ -456,11 +706,12 @@ export default function AIConfig() {
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
         <h3 className="font-semibold text-blue-800 dark:text-blue-300 mb-2">How it works</h3>
         <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
-          <li>1. Posts are collected from data sources (Hacker News, etc.)</li>
-          <li>2. Filter rules exclude junk (job posts, promos, low engagement)</li>
-          <li>3. AI analyzes remaining posts to extract the core pain point</li>
-          <li>4. Similar pain points are clustered into single opportunities</li>
-          <li>5. Opportunities are scored based on validation signals</li>
+          <li>1. Posts are collected from data sources (Hacker News, Reddit, etc.)</li>
+          <li>2. Exclusion rules remove junk (job posts, promos, off-topic)</li>
+          <li>3. Signal phrases prioritize posts with opportunity indicators — these bypass engagement thresholds</li>
+          <li>4. AI analyzes posts for market signals: pain points, feature requests, workarounds, integration gaps, ideas</li>
+          <li>5. Posts are held as pending until multiple describe the same problem (consensus)</li>
+          <li>6. Consensus clusters (2+ posts) become scored Opportunities</li>
         </ul>
       </div>
     </div>

@@ -788,7 +788,8 @@ def update_ai_config():
             if 'provider' in data:
                 current['provider'] = data['provider']
             if 'api_key' in data and data['api_key']:  # Only update if provided
-                current['api_key'] = data['api_key']
+                provider = current.get('provider', 'glm')
+                current.setdefault('api_keys', {})[provider] = data['api_key']
             if 'model' in data:
                 current['model'] = data['model']
             if 'api_url' in data:
@@ -852,18 +853,47 @@ def get_filter_rules():
                 SystemSettings.key == 'filter_rules'
             ).first()
 
-            rules = settings.value if settings else {
+            default_rules = {
                 'exclude_keywords': [
                     'hiring', 'job', 'salary', 'interview', 'resume',
                     'who is hiring', 'freelancer', 'remote job',
-                    'show hn', 'launched', 'my startup', 'i built'
                 ],
-                'require_keywords': [],  # Must contain at least one
+                'signal_phrases': [
+                    {'phrase': 'i wish', 'category': 'feature_request'},
+                    {'phrase': 'looking for a tool', 'category': 'feature_request'},
+                    {'phrase': 'does anyone know', 'category': 'feature_request'},
+                    {'phrase': 'no way to', 'category': 'integration_gap'},
+                    {'phrase': 'ended up building', 'category': 'workaround'},
+                    {'phrase': 'wrote a script', 'category': 'workaround'},
+                    {'phrase': 'someone should build', 'category': 'idea'},
+                    {'phrase': "why doesn't", 'category': 'idea'},
+                    {'phrase': "i'd pay for", 'category': 'willingness_to_pay'},
+                    {'phrase': 'shut up and take my money', 'category': 'willingness_to_pay'},
+                    {'phrase': 'missing feature', 'category': 'feature_request'},
+                    {'phrase': 'integrate with', 'category': 'integration_gap'},
+                    {'phrase': 'no integration', 'category': 'integration_gap'},
+                    {'phrase': 'manually every', 'category': 'pain_point'},
+                    {'phrase': 'hours every week', 'category': 'pain_point'},
+                    {'phrase': 'any alternative', 'category': 'feature_request'},
+                    {'phrase': 'is there a', 'category': 'feature_request'},
+                    {'phrase': 'switched from', 'category': 'pain_point'},
+                    {'phrase': 'frustrated with', 'category': 'pain_point'},
+                    {'phrase': 'hate that', 'category': 'pain_point'},
+                ],
+                'require_keywords': [],
                 'min_upvotes': 5,
                 'min_comments': 2,
                 'exclude_categories': ['political', 'hardware', 'career'],
-                'custom_rules': []  # User-defined rules
+                'custom_rules': [],
             }
+
+            if settings and settings.value:
+                rules = settings.value
+                # Ensure signal_phrases exists (migrate old rules)
+                if 'signal_phrases' not in rules:
+                    rules['signal_phrases'] = default_rules['signal_phrases']
+            else:
+                rules = default_rules
 
             return jsonify({'data': rules})
 
@@ -988,6 +1018,141 @@ def add_exclusion_rule():
 
             db.commit()
             return jsonify({'data': {'message': f'Added exclusion: {keyword}'}})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/filter-rules/add-signal', methods=['POST'])
+@admin_required()
+def add_signal_phrase():
+    """Add a signal phrase (positive keyword/phrase to look for).
+
+    Signal phrases indicate market opportunity signals: feature requests,
+    workarounds, integration gaps, willingness to pay, etc.
+
+    Request Body:
+        phrase: Signal phrase to add
+        category: Category hint (optional) — e.g. 'pain_point', 'feature_request',
+                  'workaround', 'integration_gap', 'willingness_to_pay', 'idea'
+
+    Returns:
+        JSON response confirming addition
+    """
+    try:
+        from datetime import UTC, datetime
+
+        from app.db import SessionLocal
+        from app.models import SystemSettings
+
+        data = request.get_json()
+        phrase = data.get('phrase', '').strip().lower()
+        category = data.get('category', '').strip()
+
+        if not phrase:
+            return jsonify({'error': 'Phrase is required'}), 400
+
+        db = SessionLocal()
+        try:
+            settings = db.query(SystemSettings).filter(
+                SystemSettings.key == 'filter_rules'
+            ).first()
+
+            if settings:
+                rules = settings.value
+            else:
+                rules = {
+                    'exclude_keywords': [],
+                    'signal_phrases': [],
+                    'min_upvotes': 5,
+                    'min_comments': 2,
+                    'exclude_categories': [],
+                    'custom_rules': [],
+                }
+
+            # Ensure signal_phrases list exists (migration for existing rules)
+            rules.setdefault('signal_phrases', [])
+
+            # Check for duplicates
+            existing_phrases = [
+                sp['phrase'] if isinstance(sp, dict) else sp
+                for sp in rules['signal_phrases']
+            ]
+            if phrase in existing_phrases:
+                return jsonify({'error': f'Signal phrase already exists: {phrase}'}), 409
+
+            rules['signal_phrases'].append({
+                'phrase': phrase,
+                'category': category,
+                'added_at': datetime.now(UTC).isoformat(),
+            })
+
+            if settings:
+                settings.value = rules
+                settings.updated_at = datetime.now(UTC)
+            else:
+                settings = SystemSettings(key='filter_rules', value=rules)
+                db.add(settings)
+
+            db.commit()
+            return jsonify({'data': {'message': f'Added signal phrase: {phrase}'}})
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@admin_bp.route('/filter-rules/remove-signal', methods=['POST'])
+@admin_required()
+def remove_signal_phrase():
+    """Remove a signal phrase.
+
+    Request Body:
+        phrase: Signal phrase to remove
+
+    Returns:
+        JSON response confirming removal
+    """
+    try:
+        from datetime import UTC, datetime
+
+        from app.db import SessionLocal
+        from app.models import SystemSettings
+
+        data = request.get_json()
+        phrase = data.get('phrase', '').strip().lower()
+
+        if not phrase:
+            return jsonify({'error': 'Phrase is required'}), 400
+
+        db = SessionLocal()
+        try:
+            settings = db.query(SystemSettings).filter(
+                SystemSettings.key == 'filter_rules'
+            ).first()
+
+            if not settings:
+                return jsonify({'error': 'No filter rules configured'}), 404
+
+            rules = settings.value
+            signals = rules.get('signal_phrases', [])
+
+            # Remove matching phrase (handle both dict and string entries)
+            rules['signal_phrases'] = [
+                sp for sp in signals
+                if (sp['phrase'] if isinstance(sp, dict) else sp) != phrase
+            ]
+
+            settings.value = rules
+            settings.updated_at = datetime.now(UTC)
+            db.commit()
+
+            return jsonify({'data': {'message': f'Removed signal phrase: {phrase}'}})
 
         finally:
             db.close()

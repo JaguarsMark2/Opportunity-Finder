@@ -91,7 +91,10 @@ class DataCollectorService:
         ).first()
 
         if settings and settings.value:
-            return settings.value
+            rules = settings.value
+            # Ensure signal_phrases exists (migration)
+            rules.setdefault('signal_phrases', [])
+            return rules
 
         # Default filter rules
         return {
@@ -99,15 +102,20 @@ class DataCollectorService:
                 'hiring', 'job', 'career', 'salary', 'remote work',
                 'who is hiring', 'seeking freelancer', 'looking for developer'
             ],
+            'signal_phrases': [],
             'require_keywords': [],
             'min_upvotes': 5,
             'min_comments': 2,
             'exclude_categories': ['job_posting', 'promotional'],
-            'custom_rules': []
+            'custom_rules': [],
         }
 
     def _passes_filter_rules(self, opp_data: dict[str, Any]) -> tuple[bool, str | None]:
         """Check if an opportunity passes the filter rules.
+
+        Posts containing signal phrases get a pass on engagement
+        thresholds, because a low-upvote post that says "I wish
+        someone would build X" is still valuable signal.
 
         Args:
             opp_data: Opportunity data dict
@@ -120,7 +128,7 @@ class DataCollectorService:
         text = f"{title} {description}"
         engagement = opp_data.get('engagement_metrics', {})
 
-        # Check exclude keywords
+        # Check exclude keywords (always enforced)
         for keyword in self.filter_rules.get('exclude_keywords', []):
             if keyword.lower() in text:
                 return False, f"Contains excluded keyword: {keyword}"
@@ -132,19 +140,23 @@ class DataCollectorService:
             if not found:
                 return False, "Missing required keywords"
 
-        # Check minimum engagement
-        upvotes = engagement.get('upvotes', 0) or engagement.get('points', 0) or 0
-        comments = engagement.get('comments', 0) or 0
-        min_upvotes = self.filter_rules.get('min_upvotes', 5)
-        min_comments = self.filter_rules.get('min_comments', 2)
+        # Check if post contains any signal phrases
+        has_signal = self._contains_signal_phrase(text)
 
-        if upvotes < min_upvotes:
-            return False, f"Below minimum upvotes ({upvotes} < {min_upvotes})"
+        # Check minimum engagement — but signal phrases bypass this
+        if not has_signal:
+            upvotes = engagement.get('upvotes', 0) or engagement.get('points', 0) or 0
+            comments = engagement.get('comments', 0) or 0
+            min_upvotes = self.filter_rules.get('min_upvotes', 5)
+            min_comments = self.filter_rules.get('min_comments', 2)
 
-        if comments < min_comments:
-            return False, f"Below minimum comments ({comments} < {min_comments})"
+            if upvotes < min_upvotes:
+                return False, f"Below minimum upvotes ({upvotes} < {min_upvotes})"
 
-        # Check custom rules
+            if comments < min_comments:
+                return False, f"Below minimum comments ({comments} < {min_comments})"
+
+        # Check custom rules (always enforced)
         for rule in self.filter_rules.get('custom_rules', []):
             rule_type = rule.get('type', '')
             rule_value = rule.get('value', '').lower()
@@ -160,6 +172,37 @@ class DataCollectorService:
                     pass  # Invalid regex, skip
 
         return True, None
+
+    def _contains_signal_phrase(self, text: str) -> bool:
+        """Check if text contains any configured signal phrases.
+
+        Args:
+            text: Lowercased text to check
+
+        Returns:
+            True if any signal phrase is found
+        """
+        for sp in self.filter_rules.get('signal_phrases', []):
+            phrase = sp['phrase'] if isinstance(sp, dict) else sp
+            if phrase.lower() in text:
+                return True
+        return False
+
+    def _get_signal_phrases_for_prompt(self) -> str:
+        """Format signal phrases for inclusion in the AI prompt.
+
+        Returns:
+            Formatted string of signal phrases, or empty string if none.
+        """
+        phrases = self.filter_rules.get('signal_phrases', [])
+        if not phrases:
+            return ''
+
+        formatted = [
+            sp['phrase'] if isinstance(sp, dict) else sp
+            for sp in phrases
+        ]
+        return ', '.join(f'"{p}"' for p in formatted)
 
     def _initialize_collectors(self) -> dict[str, BaseCollector]:
         """Initialize all enabled collectors.
@@ -385,6 +428,7 @@ class DataCollectorService:
                         analysis = self.ai_service.analyze_post(
                             title=opp_data['title'],
                             content=opp_data.get('description', ''),
+                            signal_phrases=self._get_signal_phrases_for_prompt(),
                         )
                         if analysis:
                             stats['ai_analyzed'] += 1
