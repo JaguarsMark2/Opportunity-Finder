@@ -2,6 +2,7 @@ from app.models.audit_log import AuditLog
 from app.models.competitor import Competitor
 from app.models.email_log import EmailLog
 from app.models.opportunity import Opportunity
+from app.models.pending_post import PendingPost
 from app.models.refresh_token import RefreshToken
 from app.models.scan import Scan
 from app.models.source_link import SourceLink
@@ -16,6 +17,7 @@ __all__ = [
     "UserRole",
     "SubscriptionStatus",
     "Opportunity",
+    "PendingPost",
     "Competitor",
     "SubscriptionTier",
     "Scan",

@@ -1,10 +1,15 @@
-"""Data collector service for orchestrating all collectors."""
+"""Data collector service for orchestrating all collectors.
+
+Implements a consensus-based pipeline: posts are analyzed by AI and held
+as PendingPosts until multiple posts describe the same problem.  Only
+then are they promoted to Opportunities with SourceLinks.
+"""
 
 import os
 import re
 import sys
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -14,8 +19,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.collectors import BaseCollector, get_available_collectors, get_enabled_collectors
 from app.collectors.microns_collector import MicronsCollector
-from app.models import Opportunity, Scan, SourceLink, SystemSettings
+from app.models import Opportunity, PendingPost, Scan, SourceLink, SystemSettings
 from app.services.ai_service import AIService
+
+# Minimum number of posts describing the same problem before we create
+# an Opportunity.  This prevents storing every random post.
+MIN_CONSENSUS_POSTS = 2
+
+# How long pending posts are kept before being expired (days).
+PENDING_POST_TTL_DAYS = 30
+
+# Maximum number of existing Opportunities to compare against in one
+# AI matching call (keeps token usage reasonable).
+MAX_MATCH_OPPORTUNITIES = 50
+
+# Maximum pending posts to cluster in one AI call.
+MAX_CLUSTER_BATCH = 40
 
 
 class DataCollectorService:
@@ -242,7 +261,20 @@ class DataCollectorService:
         return False
 
     def run_scan(self, sources: list[str] | None = None) -> dict[str, Any]:
-        """Run a full data collection scan.
+        """Run a consensus-based data collection scan.
+
+        Pipeline:
+        1. Collect posts from sources
+        2. Deduplicate against SourceLinks AND PendingPosts
+        3. Filter (keyword / engagement rules)
+        4. AI analyze each post (extract pain point, check if software opp)
+        5. Store surviving posts as PendingPosts
+        6. Match ALL pending posts against existing Opportunities
+           (promote matches → SourceLinks, delete from pending)
+        7. Cluster remaining pending posts
+           (2+ post clusters → new Opportunity + SourceLinks, delete from pending)
+           (singles stay pending for future scans)
+        8. Expire old pending posts that never clustered
 
         Args:
             sources: List of sources to scan (None = all enabled)
@@ -253,7 +285,6 @@ class DataCollectorService:
         if sources is None:
             sources = list(self.collectors.keys())
 
-        # Filter to only available collectors
         sources = [s for s in sources if s in self.collectors]
 
         # Create scan record
@@ -261,178 +292,182 @@ class DataCollectorService:
             id=str(uuid.uuid4()),
             status='running',
             started_at=datetime.now(UTC),
-            sources_processed={}
+            sources_processed={},
         )
         self.db.add(scan)
         self.db.commit()
-
-        # Ensure sources_processed is not None (for type checking)
         assert scan.sources_processed is not None
 
-        all_results = []
+        all_results: list[Any] = []
+        stats = {
+            'collected': 0,
+            'duplicates': 0,
+            'filtered': 0,
+            'ai_analyzed': 0,
+            'ai_rejected': 0,
+            'pending_added': 0,
+            'matched_to_existing': 0,
+            'new_opportunities': 0,
+            'pending_remaining': 0,
+            'expired': 0,
+        }
 
         try:
-            # Collect from each source
+            # ----------------------------------------------------------
+            # Phase 1: Collect raw posts from each source
+            # ----------------------------------------------------------
             for source in sources:
                 if source not in self.collectors:
                     continue
 
-                print(f"Collecting from {source}...")
+                print(f"[Scan] Collecting from {source}...")
                 collector = self.collectors[source]
 
-                # Skip google_trends and microns - they're handled differently
                 if source in ['google_trends', 'microns']:
                     scan.sources_processed[source] = {
                         'status': 'skipped',
                         'count': 0,
-                        'message': 'Handled separately'
+                        'message': 'Handled separately',
                     }
                     continue
 
                 results = collector.collect()
                 all_results.extend(results)
-
                 scan.sources_processed[source] = {
                     'status': 'completed',
-                    'count': len(results)
+                    'count': len(results),
                 }
-
                 self.db.commit()
 
-            # Calculate engagement scores using Microns collector
+            stats['collected'] = len(all_results)
+
+            # Enrich with Microns engagement scores
             microns_collector = MicronsCollector(self.config.get('microns', {}))
-            opportunities_data = [
+            enriched = microns_collector.collect([
                 {
                     'title': r.title,
                     'description': r.description,
                     'url': r.url,
                     'source_type': r.source_type,
-                    'engagement_metrics': r.engagement_metrics
+                    'engagement_metrics': r.engagement_metrics,
                 }
                 for r in all_results
-            ]
-            enriched_opportunities = microns_collector.collect(opportunities_data)
+            ])
 
-            # Store opportunities in database
-            stored_count = 0
-            filtered_count = 0
-            ai_analyzed_count = 0
+            # ----------------------------------------------------------
+            # Phase 2: Deduplicate, filter, AI analyze → PendingPosts
+            # ----------------------------------------------------------
+            new_pending: list[PendingPost] = []
 
-            for opp_data in enriched_opportunities:
-                # Check for duplicates based on URL
-                existing = self.db.query(SourceLink).filter(
-                    SourceLink.url == opp_data['url']
-                ).first()
+            for opp_data in enriched:
+                url = opp_data['url']
 
-                if existing:
+                # Deduplicate against existing SourceLinks and PendingPosts
+                if self._is_duplicate_url(url):
+                    stats['duplicates'] += 1
                     continue
 
-                # Apply filter rules
-                passes_filter, rejection_reason = self._passes_filter_rules(opp_data)
-                if not passes_filter:
-                    filtered_count += 1
-                    print(f"Filtered out: {opp_data['title'][:50]}... - {rejection_reason}")
+                # Apply keyword / engagement filter rules
+                passes, reason = self._passes_filter_rules(opp_data)
+                if not passes:
+                    stats['filtered'] += 1
+                    print(f"[Scan] Filtered: {opp_data['title'][:50]}... — {reason}")
                     continue
 
-                # Extract engagement metrics
-                engagement = opp_data.get('engagement_metrics', {})
-                pain_score = engagement.get('pain_score', 0)
-                upvotes = engagement.get('upvotes', 0) or engagement.get('points', 0) or 0
-                comments = engagement.get('comments', 0) or 0
-
-                # Use pain_score as initial score, or calculate from upvotes
-                initial_score = pain_score if pain_score > 0 else min(100, upvotes + comments)
-
-                # Default values
-                opp_title = opp_data['title']
-                opp_description = opp_data['description']
-                opp_category = None
+                # AI analysis (if configured)
                 ai_analysis = None
+                pain_point = opp_data.get('description', '')
+                opp_name = opp_data.get('title', '')
+                category = None
 
-                # Use AI to analyze if enabled
                 if self.ai_service.is_configured():
                     try:
                         analysis = self.ai_service.analyze_post(
                             title=opp_data['title'],
-                            content=opp_data['description']
+                            content=opp_data.get('description', ''),
                         )
-
                         if analysis:
-                            ai_analyzed_count += 1
+                            stats['ai_analyzed'] += 1
 
-                            # Check if AI says this is NOT a software opportunity
                             if not analysis.get('is_software_opportunity', True):
-                                filtered_count += 1
+                                stats['ai_rejected'] += 1
                                 reason = analysis.get('rejection_reason', 'Not a software opportunity')
-                                print(f"AI rejected: {opp_data['title'][:50]}... - {reason}")
+                                print(f"[Scan] AI rejected: {opp_data['title'][:50]}... — {reason}")
                                 continue
 
-                            # Use AI-generated title and description
-                            if analysis.get('opportunity_name'):
-                                opp_title = analysis['opportunity_name']
-
-                            if analysis.get('pain_point'):
-                                opp_description = analysis['pain_point']
-
-                            opp_category = analysis.get('category')
+                            pain_point = analysis.get('pain_point', pain_point)
+                            opp_name = analysis.get('opportunity_name', opp_name)
+                            category = analysis.get('category')
                             ai_analysis = analysis
 
                     except Exception as e:
-                        print(f"AI analysis failed for {opp_data['title'][:30]}...: {e}")
+                        print(f"[Scan] AI analysis error: {opp_data['title'][:30]}... — {e}")
 
-                # Create opportunity
-                opportunity = Opportunity(
+                # Store as PendingPost
+                pending = PendingPost(
                     id=str(uuid.uuid4()),
-                    title=opp_title,
-                    description=opp_description,
-                    problem=opp_description,  # Also set the problem field
-                    score=initial_score,
-                    problem_score=pain_score,
-                    source_types=[opp_data['source_type']],
-                    mention_count=max(1, upvotes),
-                    category=opp_category,
-                    created_at=datetime.now(UTC)
-                )
-                self.db.add(opportunity)
-
-                # Create source link with original title
-                source_link = SourceLink(
-                    id=str(uuid.uuid4()),
-                    opportunity_id=opportunity.id,
+                    title=opp_data['title'],
+                    description=opp_data.get('description', ''),
+                    url=url,
                     source_type=opp_data['source_type'],
-                    url=opp_data['url'],
-                    title=opp_data['title'],  # Keep original title in source link
+                    pain_point=pain_point,
+                    opportunity_name=opp_name,
+                    category=category,
+                    ai_analysis=ai_analysis,
                     engagement_metrics={
                         'engagement_score': opp_data.get('engagement_score', 0),
                         'engagement_level': opp_data.get('engagement_level', 'LOW'),
-                        'ai_analysis': ai_analysis,
-                        **opp_data.get('engagement_metrics', {})
+                        **(opp_data.get('engagement_metrics', {})),
                     },
-                    collected_at=datetime.now(UTC)
+                    scan_id=scan.id,
                 )
-                self.db.add(source_link)
-
-                stored_count += 1
+                self.db.add(pending)
+                new_pending.append(pending)
+                stats['pending_added'] += 1
 
             self.db.commit()
 
-            print(f"Scan complete: {stored_count} stored, {filtered_count} filtered, {ai_analyzed_count} AI-analyzed")
+            # ----------------------------------------------------------
+            # Phase 3: Match ALL pending posts against existing Opportunities
+            # ----------------------------------------------------------
+            matched_count = self._match_pending_to_opportunities()
+            stats['matched_to_existing'] = matched_count
 
-            # Update scan
+            # ----------------------------------------------------------
+            # Phase 4: Cluster remaining pending posts (consensus check)
+            # ----------------------------------------------------------
+            new_opp_count = self._cluster_pending_posts()
+            stats['new_opportunities'] = new_opp_count
+
+            # ----------------------------------------------------------
+            # Phase 5: Expire old pending posts
+            # ----------------------------------------------------------
+            expired = self._expire_old_pending_posts()
+            stats['expired'] = expired
+
+            # Count remaining pending
+            stats['pending_remaining'] = self.db.query(PendingPost).count()
+
+            # Finalize scan
             scan.status = 'completed'
             scan.completed_at = datetime.now(UTC)
-            scan.opportunities_found = stored_count
+            scan.opportunities_found = stats['new_opportunities'] + stats['matched_to_existing']
             scan.progress = 100
             self.db.commit()
+
+            print(
+                f"[Scan] Complete: {stats['pending_added']} pending, "
+                f"{stats['matched_to_existing']} matched existing, "
+                f"{stats['new_opportunities']} new opportunities, "
+                f"{stats['pending_remaining']} still pending, "
+                f"{stats['expired']} expired"
+            )
 
             return {
                 'scan_id': scan.id,
                 'status': 'completed',
-                'total_collected': len(all_results),
-                'new_opportunities': stored_count,
-                'filtered_out': filtered_count,
-                'ai_analyzed': ai_analyzed_count,
-                'sources': scan.sources_processed
+                **stats,
+                'sources': scan.sources_processed,
             }
 
         except Exception as e:
@@ -440,8 +475,244 @@ class DataCollectorService:
             scan.error_message = str(e)
             scan.completed_at = datetime.now(UTC)
             self.db.commit()
+            raise
 
-            raise e
+    # ------------------------------------------------------------------
+    # Pipeline helpers
+    # ------------------------------------------------------------------
+
+    def _is_duplicate_url(self, url: str) -> bool:
+        """Check if a URL already exists in SourceLinks or PendingPosts."""
+        in_source = self.db.query(SourceLink).filter(
+            SourceLink.url == url
+        ).first() is not None
+
+        if in_source:
+            return True
+
+        in_pending = self.db.query(PendingPost).filter(
+            PendingPost.url == url
+        ).first() is not None
+
+        return in_pending
+
+    def _match_pending_to_opportunities(self) -> int:
+        """Match all pending posts against existing Opportunities.
+
+        Posts that match an existing Opportunity are promoted to
+        SourceLinks under that Opportunity, then removed from pending.
+
+        Returns:
+            Number of posts matched and promoted.
+        """
+        if not self.ai_service.is_configured():
+            return 0
+
+        all_pending = self.db.query(PendingPost).all()
+        if not all_pending:
+            return 0
+
+        # Only match posts that have a pain_point (were AI-analyzed)
+        analyzed_pending = [p for p in all_pending if p.pain_point]
+        if not analyzed_pending:
+            return 0
+
+        # Load recent existing Opportunities to match against
+        recent_cutoff = datetime.now(UTC) - timedelta(days=90)
+        existing_opps = (
+            self.db.query(Opportunity)
+            .filter(Opportunity.created_at >= recent_cutoff)
+            .order_by(Opportunity.score.desc().nullslast())
+            .limit(MAX_MATCH_OPPORTUNITIES)
+            .all()
+        )
+
+        if not existing_opps:
+            return 0
+
+        # Format for AI
+        opp_dicts = [
+            {'id': o.id, 'title': o.title, 'description': o.description or o.problem or ''}
+            for o in existing_opps
+        ]
+        post_dicts = [
+            {'id': p.id, 'title': p.title, 'pain_point': p.pain_point or ''}
+            for p in analyzed_pending
+        ]
+
+        print(f"[Scan] Matching {len(post_dicts)} pending posts against {len(opp_dicts)} existing opportunities...")
+        result = self.ai_service.match_to_opportunities(post_dicts, opp_dicts)
+
+        matched_count = 0
+        for match in result.get('matches', []):
+            post_id = match.get('post_id')
+            opp_id = match.get('opportunity_id')
+
+            pending = self.db.query(PendingPost).filter(PendingPost.id == post_id).first()
+            opp = self.db.query(Opportunity).filter(Opportunity.id == opp_id).first()
+
+            if not pending or not opp:
+                continue
+
+            # Promote: create SourceLink under the matched Opportunity
+            source_link = SourceLink(
+                id=str(uuid.uuid4()),
+                opportunity_id=opp.id,
+                source_type=pending.source_type,
+                url=pending.url,
+                title=pending.title,
+                engagement_metrics={
+                    **(pending.engagement_metrics or {}),
+                    'ai_analysis': pending.ai_analysis,
+                },
+                collected_at=datetime.now(UTC),
+            )
+            self.db.add(source_link)
+
+            # Update Opportunity metadata
+            opp.mention_count = (opp.mention_count or 0) + 1
+            if pending.source_type and pending.source_type not in (opp.source_types or []):
+                opp.source_types = list(set((opp.source_types or []) + [pending.source_type]))
+
+            # Remove from pending
+            self.db.delete(pending)
+            matched_count += 1
+
+        if matched_count:
+            self.db.commit()
+            print(f"[Scan] Matched {matched_count} posts to existing opportunities")
+
+        return matched_count
+
+    def _cluster_pending_posts(self) -> int:
+        """Cluster remaining pending posts and promote consensus clusters.
+
+        Only clusters with >= MIN_CONSENSUS_POSTS posts become
+        Opportunities.  Singles remain as PendingPosts.
+
+        Returns:
+            Number of new Opportunities created.
+        """
+        if not self.ai_service.is_configured():
+            return 0
+
+        all_pending = self.db.query(PendingPost).all()
+        analyzed = [p for p in all_pending if p.pain_point]
+
+        if len(analyzed) < MIN_CONSENSUS_POSTS:
+            return 0
+
+        # Format for clustering
+        pain_points = [
+            {
+                'id': p.id,
+                'pain_point': p.pain_point or '',
+                'title': p.title,
+                'opportunity_name': p.opportunity_name or '',
+            }
+            for p in analyzed[:MAX_CLUSTER_BATCH]
+        ]
+
+        print(f"[Scan] Clustering {len(pain_points)} pending posts...")
+        clusters = self.ai_service.cluster_pain_points(pain_points)
+
+        new_opp_count = 0
+
+        # Build a lookup for pending posts by ID
+        pending_by_id = {p.id: p for p in analyzed}
+
+        for cluster in clusters:
+            post_ids = cluster.get('post_ids', [])
+
+            # Only promote clusters with consensus (2+ posts)
+            if len(post_ids) < MIN_CONSENSUS_POSTS:
+                continue
+
+            confidence = cluster.get('confidence', 0)
+            if confidence < 0.6:
+                continue
+
+            # Gather the PendingPost records for this cluster
+            cluster_posts = [pending_by_id[pid] for pid in post_ids if pid in pending_by_id]
+            if len(cluster_posts) < MIN_CONSENSUS_POSTS:
+                continue
+
+            # Create the Opportunity
+            opp_title = cluster.get('name', cluster_posts[0].opportunity_name or cluster_posts[0].title)
+            opp_description = cluster.get('pain_point', cluster_posts[0].pain_point or '')
+            category = cluster_posts[0].category  # Use first post's category
+
+            # Calculate initial score from engagement
+            total_engagement = 0
+            source_types: set[str] = set()
+            for cp in cluster_posts:
+                metrics = cp.engagement_metrics or {}
+                total_engagement += metrics.get('upvotes', 0) or metrics.get('points', 0) or 0
+                total_engagement += metrics.get('comments', 0) or 0
+                source_types.add(cp.source_type)
+
+            initial_score = min(100, total_engagement)
+
+            opportunity = Opportunity(
+                id=str(uuid.uuid4()),
+                title=opp_title,
+                description=opp_description,
+                problem=opp_description,
+                score=initial_score,
+                source_types=list(source_types),
+                mention_count=len(cluster_posts),
+                category=category,
+                created_at=datetime.now(UTC),
+            )
+            self.db.add(opportunity)
+
+            # Create SourceLinks for each post in the cluster
+            for cp in cluster_posts:
+                source_link = SourceLink(
+                    id=str(uuid.uuid4()),
+                    opportunity_id=opportunity.id,
+                    source_type=cp.source_type,
+                    url=cp.url,
+                    title=cp.title,
+                    engagement_metrics={
+                        **(cp.engagement_metrics or {}),
+                        'ai_analysis': cp.ai_analysis,
+                    },
+                    collected_at=datetime.now(UTC),
+                )
+                self.db.add(source_link)
+
+                # Remove from pending
+                self.db.delete(cp)
+
+            new_opp_count += 1
+            print(f"[Scan] New opportunity: '{opp_title}' ({len(cluster_posts)} posts)")
+
+        if new_opp_count:
+            self.db.commit()
+
+        return new_opp_count
+
+    def _expire_old_pending_posts(self) -> int:
+        """Remove pending posts older than PENDING_POST_TTL_DAYS.
+
+        Returns:
+            Number of expired posts removed.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=PENDING_POST_TTL_DAYS)
+        expired = self.db.query(PendingPost).filter(
+            PendingPost.created_at < cutoff
+        ).all()
+
+        count = len(expired)
+        for p in expired:
+            self.db.delete(p)
+
+        if count:
+            self.db.commit()
+            print(f"[Scan] Expired {count} old pending posts (>{PENDING_POST_TTL_DAYS} days)")
+
+        return count
 
     def get_scan_status(self, scan_id: str) -> dict[str, Any]:
         """Get status of a scan.
