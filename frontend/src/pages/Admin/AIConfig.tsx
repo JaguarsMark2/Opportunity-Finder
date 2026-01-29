@@ -32,6 +32,7 @@ export default function AIConfig() {
   const [newApiKey, setNewApiKey] = useState('');
   const [newExcludeKeyword, setNewExcludeKeyword] = useState('');
   const [excludeReason, setExcludeReason] = useState('');
+  const [configError, setConfigError] = useState<string | null>(null);
 
   // Fetch AI config
   const { data: aiConfig, isLoading: aiLoading } = useQuery({
@@ -60,6 +61,11 @@ export default function AIConfig() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ai-config'] });
       setNewApiKey('');
+      setConfigError(null);
+    },
+    onError: (error: any) => {
+      const msg = error?.response?.data?.error || error?.message || 'Failed to update config';
+      setConfigError(msg);
     },
   });
 
@@ -193,6 +199,14 @@ export default function AIConfig() {
               </button>
             ))}
           </div>
+          {updateAIConfig.isPending && (
+            <p className="mt-2 text-sm text-blue-600 dark:text-blue-400">Saving...</p>
+          )}
+          {configError && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+              Error: {configError}
+            </p>
+          )}
         </div>
 
         {/* API Key */}

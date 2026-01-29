@@ -7,12 +7,14 @@ Uses LLM to:
 4. Assess if it's a valid software opportunity
 """
 
+import copy
 import json
 import os
 from typing import Any
 
 import requests
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import SystemSettings
 
@@ -63,13 +65,17 @@ Group them by similarity. Respond in JSON:
         self.config = self._load_config()
 
     def _load_config(self) -> dict[str, Any]:
-        """Load AI configuration from database."""
+        """Load AI configuration from database.
+
+        Returns a deep copy so callers can mutate without affecting
+        the SQLAlchemy-tracked object (which would prevent change detection).
+        """
         settings = self.db.query(SystemSettings).filter(
             SystemSettings.key == self.SETTINGS_KEY
         ).first()
 
         if settings and settings.value:
-            return settings.value
+            return copy.deepcopy(settings.value)
 
         return {
             'provider': 'glm',  # glm, openai, anthropic
@@ -86,7 +92,8 @@ Group them by similarity. Respond in JSON:
         ).first()
 
         if settings:
-            settings.value = config
+            settings.value = copy.deepcopy(config)
+            flag_modified(settings, 'value')
         else:
             settings = SystemSettings(
                 key=self.SETTINGS_KEY,
