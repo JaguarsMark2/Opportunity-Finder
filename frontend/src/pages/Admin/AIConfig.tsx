@@ -223,8 +223,49 @@ export default function AIConfig() {
           )}
         </div>
 
+        {/* Model Selection */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Model
+          </label>
+          <div className="flex gap-3">
+            <select
+              value={aiConfig?.model || ''}
+              onChange={(e) => updateAIConfig.mutate({ model: e.target.value })}
+              className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              {aiConfig?.provider === 'glm' && (
+                <>
+                  <option value="glm-4">GLM-4 (Standard)</option>
+                  <option value="glm-4-plus">GLM-4 Plus</option>
+                  <option value="glm-4-flash">GLM-4 Flash (Fast)</option>
+                  <option value="glm-4-0520">GLM-4 (0520)</option>
+                  <option value="glm-4-long">GLM-4 Long</option>
+                </>
+              )}
+              {aiConfig?.provider === 'openai' && (
+                <>
+                  <option value="gpt-4o-mini">GPT-4o Mini (Cheap)</option>
+                  <option value="gpt-4o">GPT-4o</option>
+                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                </>
+              )}
+              {aiConfig?.provider === 'anthropic' && (
+                <>
+                  <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
+                  <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                  <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                </>
+              )}
+            </select>
+          </div>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Current: {aiConfig?.provider || 'none'} / {aiConfig?.model || 'none'}
+          </p>
+        </div>
+
         {/* Enable/Disable & Test */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           <button
             onClick={handleToggleEnabled}
             className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -243,13 +284,31 @@ export default function AIConfig() {
           >
             {testAI.isPending ? 'Testing...' : 'Test Connection'}
           </button>
-
-          {testAI.data && (
-            <span className={`text-sm ${testAI.data.success ? 'text-green-600' : 'text-red-600'}`}>
-              {testAI.data.message}
-            </span>
-          )}
         </div>
+
+        {/* Test Result Display */}
+        {testAI.data && (
+          <div className={`mt-4 p-4 rounded-lg border ${
+            testAI.data.success
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+          }`}>
+            <p className={`text-sm font-medium ${
+              testAI.data.success
+                ? 'text-green-800 dark:text-green-300'
+                : 'text-red-800 dark:text-red-300'
+            }`}>
+              {testAI.data.success ? 'Connection Successful' : 'Connection Failed'}
+            </p>
+            <p className={`mt-1 text-sm ${
+              testAI.data.success
+                ? 'text-green-700 dark:text-green-400'
+                : 'text-red-700 dark:text-red-400'
+            }`}>
+              {testAI.data.message}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Filtering Rules Section */}

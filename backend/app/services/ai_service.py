@@ -296,27 +296,75 @@ Group them by similarity. Respond in JSON:
             ]
 
     def test_connection(self) -> dict[str, Any]:
-        """Test the AI API connection."""
-        if not self.config.get('api_key'):
+        """Test the AI API connection.
+
+        Bypasses the 'enabled' check so users can test their API key
+        before enabling AI analysis.
+        """
+        api_key = self.config.get('api_key')
+        if not api_key:
             return {
                 'success': False,
-                'message': 'API key not configured'
+                'message': 'API key not configured. Save your API key first.'
             }
 
+        provider = self.config.get('provider', 'glm')
+        model = self.config.get('model', 'glm-4')
+        prompt = "Say 'OK' if you can read this."
+
         try:
-            response = self._call_llm("Say 'OK' if you can read this.")
+            # Call provider directly, bypassing is_configured() check
+            if provider == 'glm':
+                response = self._call_glm(prompt, api_key, model)
+            elif provider == 'openai':
+                response = self._call_openai(prompt, api_key, model)
+            elif provider == 'anthropic':
+                response = self._call_anthropic(prompt, api_key, model)
+            else:
+                return {
+                    'success': False,
+                    'message': f'Unknown AI provider: {provider}'
+                }
+
             if response:
                 return {
                     'success': True,
-                    'message': f'Connected successfully. Response: {response[:100]}'
+                    'message': f'Connected to {provider} ({model}). Response: {response[:100]}'
                 }
             else:
                 return {
                     'success': False,
-                    'message': 'No response from API'
+                    'message': f'No response from {provider} ({model})'
                 }
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response is not None else 'unknown'
+            body = ''
+            try:
+                body = e.response.json() if e.response is not None else {}
+                error_msg = body.get('error', {}).get('message', '') or body.get('msg', '') or str(body)
+            except Exception:
+                error_msg = str(e)
+            return {
+                'success': False,
+                'message': f'API error (HTTP {status_code}): {error_msg[:200]}'
+            }
+
+        except requests.exceptions.ConnectionError:
+            api_url = self.config.get('api_url', 'default')
+            return {
+                'success': False,
+                'message': f'Cannot connect to {provider} API ({api_url}). Check your network.'
+            }
+
+        except requests.exceptions.Timeout:
+            return {
+                'success': False,
+                'message': f'Connection to {provider} timed out (30s). Try again.'
+            }
+
         except Exception as e:
             return {
                 'success': False,
-                'message': f'Connection failed: {str(e)}'
+                'message': f'Connection failed: {type(e).__name__}: {str(e)}'
             }
