@@ -1,6 +1,6 @@
 /** AI Configuration page for admins. */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import apiClient from '../../api/client';
 
@@ -33,6 +33,7 @@ export default function AIConfig() {
   const [newExcludeKeyword, setNewExcludeKeyword] = useState('');
   const [excludeReason, setExcludeReason] = useState('');
   const [configError, setConfigError] = useState<string | null>(null);
+  const [modelInput, setModelInput] = useState('');
 
   // Fetch AI config
   const { data: aiConfig, isLoading: aiLoading } = useQuery({
@@ -42,6 +43,13 @@ export default function AIConfig() {
       return response.data.data as AIConfigData;
     },
   });
+
+  // Sync model input when config loads
+  useEffect(() => {
+    if (aiConfig?.model) {
+      setModelInput(aiConfig.model);
+    }
+  }, [aiConfig?.model]);
 
   // Fetch filter rules
   const { data: filterRules, isLoading: rulesLoading } = useQuery({
@@ -243,44 +251,55 @@ export default function AIConfig() {
           )}
         </div>
 
-        {/* Model Selection */}
+        {/* Model */}
         <div className="mb-4">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Model
           </label>
           <div className="flex gap-3">
-            <select
-              value={aiConfig?.model || ''}
-              onChange={(e) => updateAIConfig.mutate({ model: e.target.value })}
+            <input
+              type="text"
+              list="model-suggestions"
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              placeholder="e.g. glm-4, glm-4v, gpt-4o-mini"
               className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <button
+              onClick={() => { if (modelInput.trim()) updateAIConfig.mutate({ model: modelInput.trim() }); }}
+              disabled={!modelInput.trim() || modelInput === aiConfig?.model || updateAIConfig.isPending}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
+              Save Model
+            </button>
+            <datalist id="model-suggestions">
               {aiConfig?.provider === 'glm' && (
                 <>
-                  <option value="glm-4">GLM-4 (Standard)</option>
-                  <option value="glm-4-plus">GLM-4 Plus</option>
-                  <option value="glm-4-flash">GLM-4 Flash (Fast)</option>
-                  <option value="glm-4-0520">GLM-4 (0520)</option>
-                  <option value="glm-4-long">GLM-4 Long</option>
+                  <option value="glm-4" />
+                  <option value="glm-4-plus" />
+                  <option value="glm-4-flash" />
+                  <option value="glm-4-long" />
+                  <option value="glm-4-0520" />
                 </>
               )}
               {aiConfig?.provider === 'openai' && (
                 <>
-                  <option value="gpt-4o-mini">GPT-4o Mini (Cheap)</option>
-                  <option value="gpt-4o">GPT-4o</option>
-                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                  <option value="gpt-4o-mini" />
+                  <option value="gpt-4o" />
+                  <option value="gpt-4-turbo" />
                 </>
               )}
               {aiConfig?.provider === 'anthropic' && (
                 <>
-                  <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
-                  <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                  <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                  <option value="claude-3-haiku-20240307" />
+                  <option value="claude-3-5-sonnet-20241022" />
+                  <option value="claude-3-5-haiku-20241022" />
                 </>
               )}
-            </select>
+            </datalist>
           </div>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Current: {aiConfig?.provider || 'none'} / {aiConfig?.model || 'none'}
+            Type any model name your API key supports. Suggestions provided as hints.
           </p>
         </div>
 
