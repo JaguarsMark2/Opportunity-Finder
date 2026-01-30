@@ -10,7 +10,7 @@ import re
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
@@ -303,7 +303,11 @@ class DataCollectorService:
             return True
         return False
 
-    def run_scan(self, sources: list[str] | None = None) -> dict[str, Any]:
+    def run_scan(
+        self,
+        sources: list[str] | None = None,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> dict[str, Any]:
         """Run a consensus-based data collection scan.
 
         Pipeline:
@@ -321,6 +325,7 @@ class DataCollectorService:
 
         Args:
             sources: List of sources to scan (None = all enabled)
+            progress_callback: Optional (progress_pct, message) callback
 
         Returns:
             Scan results with counts
@@ -329,6 +334,12 @@ class DataCollectorService:
             sources = list(self.collectors.keys())
 
         sources = [s for s in sources if s in self.collectors]
+
+        def _report(pct: int, msg: str) -> None:
+            """Report progress if callback is provided."""
+            print(f"[Scan] [{pct}%] {msg}")
+            if progress_callback:
+                progress_callback(pct, msg)
 
         # Create scan record
         scan = Scan(
@@ -363,7 +374,7 @@ class DataCollectorService:
                 if source not in self.collectors:
                     continue
 
-                print(f"[Scan] Collecting from {source}...")
+                _report(15, f"Collecting from {source}...")
                 collector = self.collectors[source]
 
                 if source in ['google_trends', 'microns']:
@@ -383,6 +394,7 @@ class DataCollectorService:
                 self.db.commit()
 
             stats['collected'] = len(all_results)
+            _report(25, f"Collected {len(all_results)} posts, enriching engagement scores...")
 
             # Enrich with Microns engagement scores
             microns_collector = MicronsCollector(self.config.get('microns', {}))
@@ -401,8 +413,10 @@ class DataCollectorService:
             # Phase 2: Deduplicate, filter, AI analyze → PendingPosts
             # ----------------------------------------------------------
             new_pending: list[PendingPost] = []
+            total_to_process = len(enriched)
+            _report(30, f"Processing {total_to_process} posts (dedup, filter, AI)...")
 
-            for opp_data in enriched:
+            for idx, opp_data in enumerate(enriched):
                 url = opp_data['url']
 
                 # Deduplicate against existing SourceLinks and PendingPosts
@@ -424,6 +438,11 @@ class DataCollectorService:
                 category = None
 
                 if self.ai_service.is_configured():
+                    # Report progress: AI analysis spans 30-75%
+                    if total_to_process > 0:
+                        ai_pct = 30 + int((idx / total_to_process) * 45)
+                        if idx % 5 == 0:
+                            _report(ai_pct, f"AI analyzing post {idx + 1}/{total_to_process}: {opp_data['title'][:40]}...")
                     try:
                         analysis = self.ai_service.analyze_post(
                             title=opp_data['title'],
@@ -474,18 +493,21 @@ class DataCollectorService:
             # ----------------------------------------------------------
             # Phase 3: Match ALL pending posts against existing Opportunities
             # ----------------------------------------------------------
+            _report(78, f"Matching {stats['pending_added']} pending posts against existing opportunities...")
             matched_count = self._match_pending_to_opportunities()
             stats['matched_to_existing'] = matched_count
 
             # ----------------------------------------------------------
             # Phase 4: Cluster remaining pending posts (consensus check)
             # ----------------------------------------------------------
+            _report(85, "Clustering pending posts for consensus...")
             new_opp_count = self._cluster_pending_posts()
             stats['new_opportunities'] = new_opp_count
 
             # ----------------------------------------------------------
             # Phase 5: Expire old pending posts
             # ----------------------------------------------------------
+            _report(92, "Expiring stale pending posts...")
             expired = self._expire_old_pending_posts()
             stats['expired'] = expired
 

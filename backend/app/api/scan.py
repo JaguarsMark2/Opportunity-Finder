@@ -63,8 +63,56 @@ def trigger_scan():
         return jsonify({'error': str(e)}), 500
 
 
+@scan_bp.route('/<scan_id>/cancel', methods=['POST'])
+@jwt_required()
+@rate_limit(limit=10, period=60)
+def cancel_scan(scan_id: str):
+    """Cancel a running scan.
+
+    Args:
+        scan_id: Celery task ID to cancel
+
+    Returns:
+        Confirmation of cancellation
+    """
+    try:
+        from app.celery_app import celery_app
+
+        # Revoke the Celery task
+        celery_app.control.revoke(scan_id, terminate=True, signal='SIGTERM')
+
+        # Update scan record in DB
+        db = SessionLocal()
+        scan_record = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan_record and scan_record.status == 'running':
+            scan_record.status = 'failed'
+            scan_record.error_message = 'Cancelled by user'
+            from datetime import datetime
+            scan_record.completed_at = datetime.now(UTC)
+            db.commit()
+
+        # Update Redis progress
+        from app.redis_client import redis_client
+        progress_key = f"scan_progress:{scan_id}"
+        redis_client.hset(progress_key, mapping={
+            'status': 'failed',
+            'message': 'Cancelled by user',
+            'progress': '0',
+        })
+
+        db.close()
+
+        return jsonify({
+            'message': 'Scan cancelled',
+            'scan_id': scan_id,
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @scan_bp.route('/<scan_id>', methods=['GET'])
-@rate_limit(limit=30, period=60)
+@rate_limit(limit=120, period=60)
 def get_scan_progress(scan_id: str):
     """Get scan progress by ID.
 

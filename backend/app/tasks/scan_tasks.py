@@ -150,9 +150,13 @@ def run_scan(self, sources: list | None = None):
 
         self.update_progress(scan_id, 10, 'running', f'Starting data collection from {len(sources)} sources')
 
+        # Progress callback wired to Celery/Redis
+        def on_progress(pct: int, msg: str) -> None:
+            self.update_progress(scan_id, pct, 'running', msg)
+
         # Run scan
         service = DataCollectorService(db, config)
-        result = service.run_scan(sources)
+        result = service.run_scan(sources, progress_callback=on_progress)
 
         # Update progress
         self.update_progress(scan_id, 90, 'running', 'Scan complete, updating database')
