@@ -502,6 +502,56 @@ def get_system_health():
 
 
 # ============================================================================
+# Data Purge Endpoints
+# ============================================================================
+
+@admin_bp.route('/purge-opportunities', methods=['POST'])
+@admin_required()
+def purge_opportunities():
+    """Delete all opportunities, source links, pending posts, and scans.
+
+    Wipes the pipeline clean so the next scan starts fresh.
+
+    Returns:
+        JSON response with counts of deleted records
+    """
+    try:
+        from app.db import get_db
+        from app.models import Opportunity, PendingPost, Scan, SourceLink
+
+        db = next(get_db())
+
+        source_links_count = db.query(SourceLink).count()
+        db.query(SourceLink).delete()
+
+        opportunities_count = db.query(Opportunity).count()
+        db.query(Opportunity).delete()
+
+        pending_count = db.query(PendingPost).count()
+        db.query(PendingPost).delete()
+
+        scans_count = db.query(Scan).count()
+        db.query(Scan).delete()
+
+        db.commit()
+
+        return jsonify({
+            'data': {
+                'deleted': {
+                    'opportunities': opportunities_count,
+                    'source_links': source_links_count,
+                    'pending_posts': pending_count,
+                    'scans': scans_count,
+                },
+                'message': 'All pipeline data purged successfully.'
+            }
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
 # Data Source Management Endpoints
 # ============================================================================
 

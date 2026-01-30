@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import apiClient from '../../api/client';
+import { useToast } from '../../components/Toast';
 
 interface EmailLog {
   id: string;
@@ -15,6 +16,7 @@ interface EmailLog {
 
 export default function Emails() {
   const [testEmail, setTestEmail] = useState('');
+  const { showToast } = useToast();
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['admin-emails'],
@@ -30,16 +32,16 @@ export default function Emails() {
 
   const handleSendTest = async () => {
     if (!testEmail) {
-      alert('Please enter an email address');
+      showToast('Please enter an email address', 'warning');
       return;
     }
     try {
       await apiClient.post('/api/v1/admin/emails/test', { to: testEmail });
-      alert('Test email sent!');
+      showToast('Test email sent!', 'success');
       setTestEmail('');
       refetch();
     } catch (error) {
-      alert('Failed to send test email. Check SMTP configuration in .env');
+      showToast('Failed to send test email. Check SMTP configuration in .env', 'error');
     }
   };
 

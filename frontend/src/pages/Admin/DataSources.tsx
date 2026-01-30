@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import apiClient from '../../api/client';
+import { useToast } from '../../components/Toast';
 
 interface DataSource {
   id: string;
@@ -34,6 +35,7 @@ export default function DataSources() {
 
   const [testingSource, setTestingSource] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const { showToast } = useToast();
 
   // Load data sources on mount
   useEffect(() => {
@@ -68,7 +70,7 @@ export default function DataSources() {
       ));
     } catch (err) {
       console.error('Failed to toggle source:', err);
-      alert('Failed to toggle source. Check console for details.');
+      showToast('Failed to toggle source. Check console for details.', 'error');
     }
   };
 
@@ -95,7 +97,7 @@ export default function DataSources() {
       });
 
       if (Object.keys(configToSave).length === 0) {
-        alert('Please enter at least one configuration value.');
+        showToast('Please enter at least one configuration value.', 'warning');
         return;
       }
 
@@ -107,10 +109,10 @@ export default function DataSources() {
       setEditingSource(null);
       setEditConfig({});
 
-      alert('Configuration saved successfully!');
+      showToast('Configuration saved successfully!', 'success');
     } catch (err) {
       console.error('Failed to save config:', err);
-      alert('Failed to save configuration. Check console for details.');
+      showToast('Failed to save configuration. Check console for details.', 'error');
     } finally {
       setSaving(false);
     }
