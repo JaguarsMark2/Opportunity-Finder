@@ -197,6 +197,17 @@ export default function Scans() {
     return 'All sources';
   };
 
+  const handlePurgeAll = async () => {
+    if (!confirm('Delete ALL opportunities, pending posts, and scan history? This cannot be undone.')) return;
+    try {
+      await apiClient.post('/api/v1/admin/purge-opportunities');
+      showToast('All pipeline data purged', 'success');
+      refetch();
+    } catch {
+      showToast('Failed to purge data', 'error');
+    }
+  };
+
   const progressPct = liveProgress?.progress ?? 0;
   const statusColor = liveProgress?.status === 'failed' ? 'red' : scanDone ? 'green' : 'blue';
 
@@ -206,6 +217,16 @@ export default function Scans() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Scans</h1>
         <p className="text-gray-600 dark:text-gray-400">Trigger scans and monitor progress</p>
+      </div>
+
+      {/* Purge button */}
+      <div className="mb-6 flex justify-end">
+        <button
+          onClick={handlePurgeAll}
+          className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+        >
+          Purge All Data
+        </button>
       </div>
 
       {/* Run Scan Section */}

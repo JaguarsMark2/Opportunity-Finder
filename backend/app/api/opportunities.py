@@ -496,5 +496,39 @@ def get_stats():
         return jsonify({'error': str(e)}), 500
 
 
+@opportunities_bp.route('/<opportunity_id>', methods=['DELETE'])
+@jwt_required()
+@rate_limit(limit=30, period=60)
+def delete_opportunity(opportunity_id: str):
+    """Delete a single opportunity and its source links.
+
+    Args:
+        opportunity_id: Opportunity ID to delete
+
+    Returns:
+        Confirmation of deletion
+    """
+    db = None
+    try:
+        db = SessionLocal()
+        opp = db.query(Opportunity).filter(Opportunity.id == opportunity_id).first()
+        if not opp:
+            return jsonify({'error': 'Opportunity not found'}), 404
+
+        db.query(SourceLink).filter(SourceLink.opportunity_id == opportunity_id).delete()
+        db.delete(opp)
+        db.commit()
+
+        return jsonify({'message': 'Opportunity deleted'}), 200
+
+    except Exception as e:
+        if db is not None:
+            db.close()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if db is not None:
+            db.close()
+
+
 # Import uuid at module level
 import uuid

@@ -103,6 +103,8 @@ export const opportunitiesApi = {
   }) => apiClient.patch(`/api/v1/opportunities/${id}`, data),
 
   getStats: () => apiClient.get('/api/v1/opportunities/stats'),
+
+  delete: (id: string) => apiClient.delete(`/api/v1/opportunities/${id}`),
 };
 
 // User API

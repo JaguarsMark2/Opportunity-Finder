@@ -367,6 +367,11 @@ class DataCollectorService:
         }
 
         try:
+            # Inject user signal phrases into collectors that support them
+            signal_phrases = self.filter_rules.get('signal_phrases', [])
+            for collector in self.collectors.values():
+                collector.collector_config.custom_params['signal_phrases'] = signal_phrases
+
             # ----------------------------------------------------------
             # Phase 1: Collect raw posts from each source
             # ----------------------------------------------------------

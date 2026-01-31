@@ -1,8 +1,9 @@
 /** Opportunity list component. */
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { opportunitiesApi } from '../api/client';
 import OpportunityCard from './OpportunityCard';
+import { useToast } from './Toast';
 
 interface OpportunityListProps {
   filters: {
@@ -17,6 +18,19 @@ interface OpportunityListProps {
 }
 
 export default function OpportunityList({ filters, onOpportunityClick }: OpportunityListProps) {
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
+
+  const handleDelete = async (id: string) => {
+    try {
+      await opportunitiesApi.delete(id);
+      showToast('Opportunity deleted', 'success');
+      queryClient.invalidateQueries({ queryKey: ['opportunities'] });
+    } catch {
+      showToast('Failed to delete opportunity', 'error');
+    }
+  };
+
   const {
     data,
     isLoading,
@@ -103,6 +117,7 @@ export default function OpportunityList({ filters, onOpportunityClick }: Opportu
             key={opportunity.id}
             opportunity={opportunity}
             onClick={() => onOpportunityClick(opportunity)}
+            onDelete={handleDelete}
           />
         ))}
       </div>

@@ -1,11 +1,14 @@
 """Hacker News data collector using Algolia API.
 
-Focuses on finding PAIN POINTS and unmet needs, not promotional posts.
-Targets "Ask HN" posts where people are seeking solutions.
+Comprehensive market signal discovery — not just pain points but feature
+requests, workarounds, integration gaps, tool comparisons, ideas, and
+willingness-to-pay signals across Ask HN, Tell HN, and general discussions.
 """
 
+import math
 import os
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,61 +18,132 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from .base_collector import BaseCollector, CollectorResult, register_collector
 
+# Delay between Algolia requests to be a good citizen (seconds)
+_REQUEST_DELAY = 0.3
+
 
 @register_collector('hacker_news')
 class HackerNewsCollector(BaseCollector):
-    """Collector for Hacker News pain points using Algolia API.
+    """Collector for Hacker News market signals using Algolia API.
 
-    Focuses on "Ask HN" posts and discussions where people express
-    problems, frustrations, and unmet needs - real opportunity signals.
+    Searches broadly for opportunity signals: pain points, feature requests,
+    workarounds, integration gaps, tool comparisons, and more.
 
     Configuration:
         custom_params: {
             'days_back': Number of days to look back (default: 30)
-            'min_points': Minimum upvotes required (default: 5)
-            'min_comments': Minimum comments required (default: 2)
+            'min_points': Minimum upvotes required (default: 3)
+            'min_comments': Minimum comments required (default: 1)
+            'signal_phrases': List of user-configured signal phrases
         }
     """
 
     API_URL = "https://hn.algolia.com/api/v1"
 
-    # Pain point search queries - these find people with PROBLEMS
-    PAIN_POINT_QUERIES = [
-        # Direct asks for solutions
+    # ── Search queries organised by signal type ──────────────────────
+    SEARCH_QUERIES = [
+        # ── Direct asks for solutions ──
         'Ask HN: How do you',
         'Ask HN: What do you use for',
         'Ask HN: Is there a tool',
         'Ask HN: Best way to',
         'Ask HN: Looking for',
+        'Ask HN: What are you using',
+        'Ask HN: How are you handling',
+        'Ask HN: Anyone built',
+        'Ask HN: What would you build',
+        'Ask HN: What problems',
 
-        # Frustration signals
+        # ── Frustration / pain signals ──
         'frustrated with',
         'annoyed by',
         'hate having to',
         'wish there was',
         'why is it so hard',
+        'sick of',
+        'waste of time',
+        'broken workflow',
+        'terrible experience',
 
-        # Unmet needs
+        # ── Feature requests / gaps ──
         'need a better',
         'looking for alternative',
         'recommend a tool',
-        'how do you handle',
-        'struggling with',
+        'missing feature',
+        'no good option',
+        'nothing works well',
+        'any alternative to',
+        'replacement for',
+        'switched from',
+        'migrating away from',
+
+        # ── Workaround signals ──
+        'ended up building',
+        'wrote a script to',
+        'my workaround',
+        'hack around',
+        'built my own',
+        'cobbled together',
+
+        # ── Integration / automation gaps ──
+        'integrate with',
+        'no integration',
+        'connect to',
+        'automate',
+        'manual process',
+        'manually every',
+        'hours every week',
+        'spreadsheet',
+        'copy paste',
+
+        # ── Willingness to pay ──
+        "I'd pay for",
+        'paying too much for',
+        'worth paying for',
+        'shut up and take my money',
+        'would pay',
+
+        # ── Ideas / market discussions ──
+        'someone should build',
+        "why doesn't",
+        'startup idea',
+        'side project idea',
+        'business opportunity',
+        'underserved market',
+        'gap in the market',
+
+        # ── Tool comparisons / evaluations ──
+        'compared to',
+        'vs',
+        'which is better',
+        'pros and cons',
+        'review of',
+
+        # ── Building in public / validation ──
+        'Tell HN:',
+        'launched',
+        'just shipped',
+        'Show HN:',
     ]
 
-    # Keywords that indicate a real pain point (boost score)
-    PAIN_INDICATORS = [
+    # Keywords that boost opportunity score
+    OPPORTUNITY_INDICATORS = [
         'frustrated', 'annoying', 'tedious', 'painful', 'hate',
         'wish', 'need', 'looking for', 'alternative', 'better way',
         'how do you', 'what do you use', 'recommend', 'suggestion',
-        'problem', 'issue', 'struggle', 'difficult', 'hard to'
+        'problem', 'issue', 'struggle', 'difficult', 'hard to',
+        'workaround', 'hack', 'built my own', 'wrote a script',
+        'integrate', 'automate', 'manual', 'repetitive',
+        'pay for', 'worth', 'pricing', 'expensive', 'cheap',
+        'missing', 'gap', 'no option', 'nothing works',
+        'switched', 'migrated', 'replaced', 'moved away',
+        'idea', 'opportunity', 'market', 'demand', 'growing',
     ]
 
     # Keywords that indicate NOT an opportunity (filter out)
     EXCLUDE_KEYWORDS = [
         'hiring', 'job', 'salary', 'interview', 'resume',
         'who is hiring', 'freelancer', 'remote job',
-        'launched', 'show hn', 'my startup', 'i built',
     ]
 
     def __init__(self, config: dict[str, Any] | None = None):
@@ -88,143 +162,168 @@ class HackerNewsCollector(BaseCollector):
         self,
         days_back: int = 30,
         limit_per_query: int = 50,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> list[CollectorResult]:
-        """Collect pain point posts from Hacker News.
+        """Collect market signal posts from Hacker News.
 
         Args:
             days_back: Number of days to look back (default: 30)
             limit_per_query: Results per search query
 
         Returns:
-            List of validated pain point opportunities
+            List of opportunity signal posts
         """
         custom_params = self.collector_config.custom_params
         days_back = custom_params.get('days_back', days_back)
-        min_points = custom_params.get('min_points', 5)
-        min_comments = custom_params.get('min_comments', 2)
+        min_points = custom_params.get('min_points', 3)
+        min_comments = custom_params.get('min_comments', 1)
 
-        results = []
-        seen_ids = set()
+        results: list[CollectorResult] = []
+        seen_ids: set[str] = set()
         cutoff_timestamp = int((datetime.now(UTC) - timedelta(days=days_back)).timestamp())
 
-        # First, get "Ask HN" posts specifically (these are gold)
-        ask_hn_results = self._search_ask_hn(cutoff_timestamp, min_points, min_comments)
-        for result in ask_hn_results:
-            if result.metadata.get('object_id') not in seen_ids:
-                seen_ids.add(result.metadata.get('object_id'))
-                results.append(result)
+        # ── 1. Ask HN posts (highest-signal discussions) ──
+        ask_hn = self._search_tagged(
+            'ask_hn', cutoff_timestamp, min_points, min_comments, pages=3,
+        )
+        for r in ask_hn:
+            oid = r.metadata.get('object_id')
+            if oid and oid not in seen_ids:
+                seen_ids.add(oid)
+                results.append(r)
 
-        # Then search for pain point keywords
-        for query in self.PAIN_POINT_QUERIES:
-            try:
-                hits = self._search(query, cutoff_timestamp, limit_per_query)
+        print(f"  [HN] Ask HN: {len(results)} posts")
 
-                for hit in hits:
-                    object_id = hit.get('objectID')
-                    if object_id in seen_ids:
-                        continue
+        # ── 2. Tell HN posts (experience sharing) ──
+        tell_hn_before = len(results)
+        tell_hn = self._search_tagged(
+            'show_hn', cutoff_timestamp, min_points, min_comments, pages=2,
+        )
+        for r in tell_hn:
+            oid = r.metadata.get('object_id')
+            if oid and oid not in seen_ids:
+                seen_ids.add(oid)
+                results.append(r)
 
-                    # Filter by engagement
-                    points = hit.get('points', 0) or 0
-                    comments = hit.get('num_comments', 0) or 0
+        print(f"  [HN] Show HN: {len(results) - tell_hn_before} posts")
 
-                    if points < min_points or comments < min_comments:
-                        continue
+        # ── 3. Keyword searches ──
+        keyword_before = len(results)
+        all_queries = list(self.SEARCH_QUERIES)
 
-                    # Get full text
-                    title = hit.get('title', '') or ''
-                    story_text = hit.get('story_text', '') or ''
-                    combined_text = f"{title} {story_text}".lower()
+        # Add user-configured signal phrases as queries
+        signal_phrases = custom_params.get('signal_phrases', [])
+        for sp in signal_phrases:
+            phrase = sp if isinstance(sp, str) else sp.get('phrase', '')
+            if phrase and phrase not in all_queries:
+                all_queries.append(phrase)
 
-                    # Skip excluded content (jobs, promos)
-                    if self._should_exclude(combined_text):
-                        continue
+        for query in all_queries:
+            self._search_and_add(
+                query, cutoff_timestamp, limit_per_query,
+                min_points, min_comments, seen_ids, results,
+            )
 
-                    # Calculate pain point score
-                    pain_score = self._calculate_pain_score(combined_text, points, comments)
+        print(f"  [HN] Keyword searches: {len(results) - keyword_before} posts")
 
-                    if pain_score < 30:  # Minimum threshold
-                        continue
+        # ── 4. High-engagement recent stories ──
+        hot_before = len(results)
+        self._search_hot_stories(
+            cutoff_timestamp, min_points=10, min_comments=10,
+            seen_ids=seen_ids, results=results,
+        )
+        print(f"  [HN] Hot stories: {len(results) - hot_before} posts")
 
-                    seen_ids.add(object_id)
-
-                    # Build HN URL for self-posts
-                    url = hit.get('url') or f"https://news.ycombinator.com/item?id={object_id}"
-
-                    result = CollectorResult(
-                        title=self._normalize_text(title),
-                        description=self._normalize_text(story_text[:1000]) if story_text else title,
-                        url=url,
-                        source_type='hacker_news',
-                        engagement_metrics={
-                            'upvotes': points,
-                            'comments': comments,
-                            'pain_score': pain_score,
-                        },
-                        metadata={
-                            'author': hit.get('author'),
-                            'created_at': hit.get('created_at'),
-                            'object_id': object_id,
-                            'is_ask_hn': title.lower().startswith('ask hn'),
-                            'search_query': query,
-                        }
-                    )
-                    results.append(result)
-
-            except Exception as e:
-                print(f"Error searching HN for '{query}': {e}")
-                continue
-
-        print(f"HN Collector: Found {len(results)} pain point opportunities")
+        print(f"[HN] Total collected: {len(results)} posts")
         return results
 
-    def _search_ask_hn(
+    # ── Search helpers ───────────────────────────────────────────────
+
+    def _search_tagged(
         self,
+        tag: str,
         cutoff_timestamp: int,
         min_points: int,
-        min_comments: int
+        min_comments: int,
+        pages: int = 1,
     ) -> list[CollectorResult]:
-        """Search specifically for Ask HN posts.
+        """Search HN by tag (ask_hn, show_hn, etc.) with pagination."""
+        results: list[CollectorResult] = []
 
-        These are the highest quality pain point signals.
-        """
-        results = []
+        for page in range(pages):
+            try:
+                params = {
+                    'tags': tag,
+                    'numericFilters': (
+                        f'created_at_i>{cutoff_timestamp},'
+                        f'points>{min_points},'
+                        f'num_comments>{min_comments}'
+                    ),
+                    'hitsPerPage': 100,
+                    'page': page,
+                }
+                response = requests.get(
+                    f"{self.API_URL}/search",
+                    params=params,
+                    timeout=self.collector_config.timeout,
+                )
+                response.raise_for_status()
+                hits = response.json().get('hits', [])
 
+                if not hits:
+                    break
+
+                for hit in hits:
+                    r = self._hit_to_result(hit, tag)
+                    if r:
+                        results.append(r)
+
+                time.sleep(_REQUEST_DELAY)
+
+            except Exception as e:
+                print(f"  [HN] Error fetching {tag} page {page}: {e}")
+                break
+
+        return results
+
+    def _search_and_add(
+        self,
+        query: str,
+        cutoff_timestamp: int,
+        limit: int,
+        min_points: int,
+        min_comments: int,
+        seen_ids: set[str],
+        results: list[CollectorResult],
+    ) -> None:
+        """Search for a query and append unique results."""
         try:
-            params = {
-                'tags': 'ask_hn',
-                'numericFilters': f'created_at_i>{cutoff_timestamp},points>{min_points},num_comments>{min_comments}',
-                'hitsPerPage': 100,
-            }
-
-            response = requests.get(
-                f"{self.API_URL}/search",
-                params=params,
-                timeout=self.collector_config.timeout
-            )
-            response.raise_for_status()
-
-            hits = response.json().get('hits', [])
+            hits = self._search(query, cutoff_timestamp, limit)
 
             for hit in hits:
-                title = hit.get('title', '') or ''
-                story_text = hit.get('story_text', '') or ''
-                combined_text = f"{title} {story_text}".lower()
-
-                # Skip job posts and promos
-                if self._should_exclude(combined_text):
+                object_id = hit.get('objectID')
+                if not object_id or object_id in seen_ids:
                     continue
 
                 points = hit.get('points', 0) or 0
                 comments = hit.get('num_comments', 0) or 0
-                object_id = hit.get('objectID')
 
-                pain_score = self._calculate_pain_score(combined_text, points, comments)
+                if points < min_points or comments < min_comments:
+                    continue
 
-                url = f"https://news.ycombinator.com/item?id={object_id}"
+                title = hit.get('title', '') or ''
+                story_text = hit.get('story_text', '') or ''
+                combined = f"{title} {story_text}".lower()
 
-                result = CollectorResult(
+                if self._should_exclude(combined):
+                    continue
+
+                seen_ids.add(object_id)
+
+                url = hit.get('url') or f"https://news.ycombinator.com/item?id={object_id}"
+                opp_score = self._calculate_opportunity_score(combined, points, comments)
+
+                results.append(CollectorResult(
                     title=self._normalize_text(title),
                     description=self._normalize_text(story_text[:1000]) if story_text else title,
                     url=url,
@@ -232,70 +331,164 @@ class HackerNewsCollector(BaseCollector):
                     engagement_metrics={
                         'upvotes': points,
                         'comments': comments,
-                        'pain_score': pain_score,
+                        'opportunity_score': opp_score,
                     },
                     metadata={
                         'author': hit.get('author'),
                         'created_at': hit.get('created_at'),
                         'object_id': object_id,
-                        'is_ask_hn': True,
-                        'search_query': 'ask_hn',
-                    }
-                )
-                results.append(result)
+                        'is_ask_hn': title.lower().startswith('ask hn'),
+                        'search_query': query,
+                    },
+                ))
+
+            time.sleep(_REQUEST_DELAY)
 
         except Exception as e:
-            print(f"Error fetching Ask HN posts: {e}")
+            print(f"  [HN] Error searching '{query[:30]}': {e}")
 
-        return results
+    def _search_hot_stories(
+        self,
+        cutoff_timestamp: int,
+        min_points: int,
+        min_comments: int,
+        seen_ids: set[str],
+        results: list[CollectorResult],
+    ) -> None:
+        """Fetch highly-engaged recent stories (front-page calibre)."""
+        try:
+            params = {
+                'tags': 'story',
+                'numericFilters': (
+                    f'created_at_i>{cutoff_timestamp},'
+                    f'points>{min_points},'
+                    f'num_comments>{min_comments}'
+                ),
+                'hitsPerPage': 100,
+            }
+            response = requests.get(
+                f"{self.API_URL}/search",
+                params=params,
+                timeout=self.collector_config.timeout,
+            )
+            response.raise_for_status()
+
+            for hit in response.json().get('hits', []):
+                object_id = hit.get('objectID')
+                if not object_id or object_id in seen_ids:
+                    continue
+
+                title = hit.get('title', '') or ''
+                story_text = hit.get('story_text', '') or ''
+                combined = f"{title} {story_text}".lower()
+
+                if self._should_exclude(combined):
+                    continue
+
+                # Only keep stories with opportunity indicators
+                indicator_count = sum(
+                    1 for ind in self.OPPORTUNITY_INDICATORS if ind in combined
+                )
+                if indicator_count == 0:
+                    continue
+
+                seen_ids.add(object_id)
+                points = hit.get('points', 0) or 0
+                comments = hit.get('num_comments', 0) or 0
+                url = hit.get('url') or f"https://news.ycombinator.com/item?id={object_id}"
+                opp_score = self._calculate_opportunity_score(combined, points, comments)
+
+                results.append(CollectorResult(
+                    title=self._normalize_text(title),
+                    description=self._normalize_text(story_text[:1000]) if story_text else title,
+                    url=url,
+                    source_type='hacker_news',
+                    engagement_metrics={
+                        'upvotes': points,
+                        'comments': comments,
+                        'opportunity_score': opp_score,
+                    },
+                    metadata={
+                        'author': hit.get('author'),
+                        'created_at': hit.get('created_at'),
+                        'object_id': object_id,
+                        'is_ask_hn': False,
+                        'search_query': 'hot_stories',
+                    },
+                ))
+
+        except Exception as e:
+            print(f"  [HN] Error fetching hot stories: {e}")
+
+    # ── Low-level helpers ────────────────────────────────────────────
+
+    def _hit_to_result(self, hit: dict, search_query: str) -> CollectorResult | None:
+        """Convert an Algolia hit to a CollectorResult."""
+        title = hit.get('title', '') or ''
+        story_text = hit.get('story_text', '') or ''
+        combined = f"{title} {story_text}".lower()
+
+        if self._should_exclude(combined):
+            return None
+
+        points = hit.get('points', 0) or 0
+        comments = hit.get('num_comments', 0) or 0
+        object_id = hit.get('objectID')
+        url = f"https://news.ycombinator.com/item?id={object_id}"
+        opp_score = self._calculate_opportunity_score(combined, points, comments)
+
+        return CollectorResult(
+            title=self._normalize_text(title),
+            description=self._normalize_text(story_text[:1000]) if story_text else title,
+            url=url,
+            source_type='hacker_news',
+            engagement_metrics={
+                'upvotes': points,
+                'comments': comments,
+                'opportunity_score': opp_score,
+            },
+            metadata={
+                'author': hit.get('author'),
+                'created_at': hit.get('created_at'),
+                'object_id': object_id,
+                'is_ask_hn': title.lower().startswith('ask hn'),
+                'search_query': search_query,
+            },
+        )
 
     def _search(self, query: str, cutoff_timestamp: int, limit: int) -> list[dict]:
-        """Execute a search query."""
+        """Execute a single Algolia search query."""
         params = {
             'query': query,
             'numericFilters': f'created_at_i>{cutoff_timestamp}',
             'hitsPerPage': limit,
         }
-
         response = requests.get(
             f"{self.API_URL}/search",
             params=params,
-            timeout=self.collector_config.timeout
+            timeout=self.collector_config.timeout,
         )
         response.raise_for_status()
-
         return response.json().get('hits', [])
 
     def _should_exclude(self, text: str) -> bool:
         """Check if content should be excluded."""
-        text_lower = text.lower()
-        return any(keyword in text_lower for keyword in self.EXCLUDE_KEYWORDS)
+        return any(kw in text for kw in self.EXCLUDE_KEYWORDS)
 
-    def _calculate_pain_score(self, text: str, points: int, comments: int) -> int:
-        """Calculate a pain point score based on content and engagement.
-
-        Score 0-100:
-        - Pain indicators in text: up to 40 points
-        - Upvotes: up to 30 points (logarithmic)
-        - Comments: up to 30 points (logarithmic)
-        """
-        import math
-
+    def _calculate_opportunity_score(self, text: str, points: int, comments: int) -> int:
+        """Score 0-100 based on opportunity indicators + engagement."""
         score = 0
-        text_lower = text.lower()
 
-        # Pain indicator score (up to 40 points)
-        pain_matches = sum(1 for indicator in self.PAIN_INDICATORS if indicator in text_lower)
-        score += min(40, pain_matches * 10)
+        # Indicator matches (up to 40)
+        matches = sum(1 for ind in self.OPPORTUNITY_INDICATORS if ind in text)
+        score += min(40, matches * 8)
 
-        # Upvote score (up to 30 points, logarithmic)
+        # Upvote score (up to 30, logarithmic)
         if points > 0:
-            # 10 points = 15, 50 points = 25, 100+ points = 30
             score += min(30, int(math.log(points + 1) * 8))
 
-        # Comment score (up to 30 points, logarithmic)
+        # Comment score (up to 30, logarithmic)
         if comments > 0:
-            # 5 comments = 13, 20 comments = 24, 50+ comments = 30
             score += min(30, int(math.log(comments + 1) * 8))
 
         return min(100, score)
