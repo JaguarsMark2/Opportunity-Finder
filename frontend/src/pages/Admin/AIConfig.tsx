@@ -52,6 +52,35 @@ const PROVIDER_MODELS: Record<string, string> = {
   anthropic: 'claude-3-haiku-20240307',
 };
 
+/** Available models per provider for the dropdown. */
+const PROVIDER_MODEL_OPTIONS: Record<string, Array<{ value: string; label: string }>> = {
+  glm: [
+    { value: 'glm-4.7', label: 'GLM-4.7 — latest flagship' },
+    { value: 'glm-4.7-flash', label: 'GLM-4.7-Flash — lightweight 30B' },
+    { value: 'glm-4.5', label: 'GLM-4.5 — previous flagship' },
+    { value: 'glm-4.5-air', label: 'GLM-4.5-Air — compact' },
+    { value: 'glm-4.5-flash', label: 'GLM-4.5-Flash — FREE tier' },
+    { value: 'glm-4', label: 'GLM-4 — legacy' },
+    { value: 'glm-4-plus', label: 'GLM-4-Plus — legacy enhanced' },
+    { value: 'glm-4-flash', label: 'GLM-4-Flash — legacy lightweight' },
+    { value: 'glm-4-air', label: 'GLM-4-Air — legacy compact' },
+    { value: 'glm-4-long', label: 'GLM-4-Long — legacy long-context' },
+  ],
+  openai: [
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini — fast & cheap' },
+    { value: 'gpt-4o', label: 'GPT-4o — flagship multimodal' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo — previous gen' },
+    { value: 'o3-mini', label: 'o3-mini — reasoning' },
+  ],
+  anthropic: [
+    { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 — balanced' },
+    { value: 'claude-haiku-4-20250514', label: 'Claude Haiku 4 — fast & cheap' },
+    { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet — previous gen' },
+    { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku — previous gen fast' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku — cheapest' },
+  ],
+};
+
 /** Default API URLs per provider. */
 const PROVIDER_URLS: Record<string, string> = {
   glm: 'https://api.z.ai/api/paas/v4/chat/completions',
@@ -72,6 +101,7 @@ export default function AIConfig() {
   // Set to a string when the user types something different.
   const [localModel, setLocalModel] = useState<string | null>(null);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
+  const [customModelMode, setCustomModelMode] = useState(false);
 
   // ── Queries ──────────────────────────────────────────────────────────
 
@@ -229,6 +259,7 @@ export default function AIConfig() {
     setConfigError(null);
     setLocalModel(null);
     setLocalUrl(null);
+    setCustomModelMode(false);
     testAI.reset();
     setTestError(null);
 
@@ -385,58 +416,66 @@ export default function AIConfig() {
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Model
           </label>
-          <div className="flex gap-3">
-            <input
-              type="text"
-              list="model-suggestions"
-              value={displayModel}
-              onChange={(e) => setLocalModel(e.target.value)}
-              placeholder="e.g. glm-4.7, gpt-4o-mini"
-              className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <button
-              onClick={handleSaveModel}
-              disabled={!modelChanged || updateAIConfig.isPending}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Save Model
-            </button>
-            <datalist id="model-suggestions">
-              {aiConfig?.provider === 'glm' && (
-                <>
-                  <option value="glm-4.7" label="GLM-4.7 — latest flagship" />
-                  <option value="glm-4.7-flash" label="GLM-4.7-Flash — lightweight 30B" />
-                  <option value="glm-4.5" label="GLM-4.5 — previous flagship" />
-                  <option value="glm-4.5-air" label="GLM-4.5-Air — compact" />
-                  <option value="glm-4.5-flash" label="GLM-4.5-Flash — FREE tier" />
-                  <option value="glm-4" label="GLM-4 — legacy" />
-                  <option value="glm-4-plus" label="GLM-4-Plus — legacy enhanced" />
-                  <option value="glm-4-flash" label="GLM-4-Flash — legacy lightweight" />
-                  <option value="glm-4-air" label="GLM-4-Air — legacy compact" />
-                  <option value="glm-4-long" label="GLM-4-Long — legacy long-context" />
-                </>
-              )}
-              {aiConfig?.provider === 'openai' && (
-                <>
-                  <option value="gpt-4o-mini" label="GPT-4o Mini — fast & cheap" />
-                  <option value="gpt-4o" label="GPT-4o — flagship multimodal" />
-                  <option value="gpt-4-turbo" label="GPT-4 Turbo — previous gen" />
-                  <option value="o3-mini" label="o3-mini — reasoning" />
-                </>
-              )}
-              {aiConfig?.provider === 'anthropic' && (
-                <>
-                  <option value="claude-sonnet-4-20250514" label="Claude Sonnet 4 — balanced" />
-                  <option value="claude-haiku-4-20250514" label="Claude Haiku 4 — fast & cheap" />
-                  <option value="claude-3-5-sonnet-20241022" label="Claude 3.5 Sonnet — previous gen" />
-                  <option value="claude-3-5-haiku-20241022" label="Claude 3.5 Haiku — previous gen fast" />
-                  <option value="claude-3-haiku-20240307" label="Claude 3 Haiku — cheapest" />
-                </>
-              )}
-            </datalist>
-          </div>
+          {!customModelMode ? (
+            <div className="flex gap-3">
+              <select
+                value={displayModel}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '__custom__') {
+                    setCustomModelMode(true);
+                    setLocalModel('');
+                  } else {
+                    setLocalModel(val);
+                  }
+                }}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                {(PROVIDER_MODEL_OPTIONS[aiConfig?.provider || 'glm'] || []).map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+                <option value="__custom__">Other (type model name)...</option>
+              </select>
+              <button
+                onClick={handleSaveModel}
+                disabled={!modelChanged || updateAIConfig.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save Model
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={displayModel}
+                onChange={(e) => setLocalModel(e.target.value)}
+                placeholder="Type any model name..."
+                autoFocus
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <button
+                onClick={handleSaveModel}
+                disabled={!modelChanged || updateAIConfig.isPending}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save Model
+              </button>
+              <button
+                onClick={() => {
+                  setCustomModelMode(false);
+                  setLocalModel(null);
+                }}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+              >
+                Back
+              </button>
+            </div>
+          )}
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Type any model name your API key supports. Suggestions provided as hints.
+            Select a model from the dropdown, or choose "Other" to type a custom model name.
           </p>
         </div>
 

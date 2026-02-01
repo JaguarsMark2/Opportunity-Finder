@@ -418,80 +418,95 @@ class DataCollectorService:
             # Phase 2: Deduplicate, filter, AI analyze → PendingPosts
             # ----------------------------------------------------------
             new_pending: list[PendingPost] = []
-            total_to_process = len(enriched)
-            _report(30, f"Processing {total_to_process} posts (dedup, filter, AI)...")
+            _report(30, f"Processing {len(enriched)} posts (dedup, filter)...")
 
-            for idx, opp_data in enumerate(enriched):
+            # First pass: dedup and filter (fast, no API calls)
+            filtered_posts: list[dict[str, Any]] = []
+            for opp_data in enriched:
                 url = opp_data['url']
 
-                # Deduplicate against existing SourceLinks and PendingPosts
                 if self._is_duplicate_url(url):
                     stats['duplicates'] += 1
                     continue
 
-                # Apply keyword / engagement filter rules
                 passes, reason = self._passes_filter_rules(opp_data)
                 if not passes:
                     stats['filtered'] += 1
-                    print(f"[Scan] Filtered: {opp_data['title'][:50]}... — {reason}")
                     continue
 
-                # AI analysis (if configured)
-                ai_analysis = None
-                pain_point = opp_data.get('description', '')
-                opp_name = opp_data.get('title', '')
-                category = None
+                filtered_posts.append(opp_data)
+
+            total_to_analyze = len(filtered_posts)
+            _report(32, f"{total_to_analyze} posts passed filters, starting AI analysis...")
+
+            # Second pass: batch AI analysis
+            BATCH_SIZE = 5
+            signal_phrases = self._get_signal_phrases_for_prompt()
+
+            for batch_start in range(0, total_to_analyze, BATCH_SIZE):
+                batch = filtered_posts[batch_start:batch_start + BATCH_SIZE]
+                batch_end = batch_start + len(batch)
+
+                # Report progress: AI analysis spans 32-75%
+                ai_pct = 32 + int((batch_start / max(total_to_analyze, 1)) * 43)
+                _report(ai_pct, f"AI analyzing posts {batch_start + 1}-{batch_end}/{total_to_analyze}...")
+
+                # Prepare batch results (default to no AI analysis)
+                batch_analyses: list[dict[str, Any] | None] = [None] * len(batch)
 
                 if self.ai_service.is_configured():
-                    # Report progress: AI analysis spans 30-75%
-                    if total_to_process > 0:
-                        ai_pct = 30 + int((idx / total_to_process) * 45)
-                        if idx % 5 == 0:
-                            _report(ai_pct, f"AI analyzing post {idx + 1}/{total_to_process}: {opp_data['title'][:40]}...")
                     try:
-                        analysis = self.ai_service.analyze_post(
-                            title=opp_data['title'],
-                            content=opp_data.get('description', ''),
-                            signal_phrases=self._get_signal_phrases_for_prompt(),
+                        batch_input = [
+                            {'title': p['title'], 'content': p.get('description', '')}
+                            for p in batch
+                        ]
+                        batch_analyses = self.ai_service.analyze_posts_batch(
+                            batch_input, signal_phrases
                         )
-                        if analysis:
-                            stats['ai_analyzed'] += 1
-
-                            if not analysis.get('is_software_opportunity', True):
-                                stats['ai_rejected'] += 1
-                                reason = analysis.get('rejection_reason', 'Not a software opportunity')
-                                print(f"[Scan] AI rejected: {opp_data['title'][:50]}... — {reason}")
-                                continue
-
-                            pain_point = analysis.get('pain_point', pain_point)
-                            opp_name = analysis.get('opportunity_name', opp_name)
-                            category = analysis.get('category')
-                            ai_analysis = analysis
-
                     except Exception as e:
-                        print(f"[Scan] AI analysis error: {opp_data['title'][:30]}... — {e}")
+                        print(f"[Scan] Batch AI error at {batch_start}: {e}")
 
-                # Store as PendingPost
-                pending = PendingPost(
-                    id=str(uuid.uuid4()),
-                    title=opp_data['title'],
-                    description=opp_data.get('description', ''),
-                    url=url,
-                    source_type=opp_data['source_type'],
-                    pain_point=pain_point,
-                    opportunity_name=opp_name,
-                    category=category,
-                    ai_analysis=ai_analysis,
-                    engagement_metrics={
-                        'engagement_score': opp_data.get('engagement_score', 0),
-                        'engagement_level': opp_data.get('engagement_level', 'LOW'),
-                        **(opp_data.get('engagement_metrics', {})),
-                    },
-                    scan_id=scan.id,
-                )
-                self.db.add(pending)
-                new_pending.append(pending)
-                stats['pending_added'] += 1
+                # Process each post in the batch
+                for i, opp_data in enumerate(batch):
+                    analysis = batch_analyses[i] if i < len(batch_analyses) else None
+
+                    pain_point = opp_data.get('description', '')
+                    opp_name = opp_data.get('title', '')
+                    category = None
+                    ai_analysis = None
+
+                    if analysis:
+                        stats['ai_analyzed'] += 1
+
+                        if not analysis.get('is_software_opportunity', True):
+                            stats['ai_rejected'] += 1
+                            continue
+
+                        pain_point = analysis.get('pain_point', pain_point)
+                        opp_name = analysis.get('opportunity_name', opp_name)
+                        category = analysis.get('category')
+                        ai_analysis = analysis
+
+                    pending = PendingPost(
+                        id=str(uuid.uuid4()),
+                        title=opp_data['title'],
+                        description=opp_data.get('description', ''),
+                        url=opp_data['url'],
+                        source_type=opp_data['source_type'],
+                        pain_point=pain_point,
+                        opportunity_name=opp_name,
+                        category=category,
+                        ai_analysis=ai_analysis,
+                        engagement_metrics={
+                            'engagement_score': opp_data.get('engagement_score', 0),
+                            'engagement_level': opp_data.get('engagement_level', 'LOW'),
+                            **(opp_data.get('engagement_metrics', {})),
+                        },
+                        scan_id=scan.id,
+                    )
+                    self.db.add(pending)
+                    new_pending.append(pending)
+                    stats['pending_added'] += 1
 
             self.db.commit()
 

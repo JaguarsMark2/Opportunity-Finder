@@ -23,6 +23,10 @@ def rate_limit(limit: int, period: int, key_func=None):
         def wrapper(*args, **kwargs):
             from flask import request
 
+            # Skip rate limiting for CORS preflight requests
+            if request.method == 'OPTIONS':
+                return f(*args, **kwargs)
+
             # Get key
             if key_func:
                 key = key_func()

@@ -94,6 +94,39 @@ Group them by similarity. Respond in JSON:
     ]
 }}"""
 
+    BATCH_ANALYZE_PROMPT = """Analyze each of these posts for market opportunity signals.
+
+For each post, look for ANY of these signal types:
+- Pain points: frustrations, complaints about current tools
+- Feature requests: "I wish", "looking for", "does anyone know a tool that..."
+- Workarounds: "I ended up building", "my hack for this", "wrote a script to..."
+- Integration gaps: "need X to talk to Y", "no way to connect"
+- Manual process complaints: spending hours on repetitive tasks
+- Idea discussions: "someone should build", "why doesn't X exist"
+- Willingness to pay: "I'd pay for", "paying $X/month for a mediocre..."
+- Building in public: someone built a solution, proving the gap exists
+{signal_context}
+Posts to analyze:
+{posts}
+
+Respond with a JSON array — one object per post, in the same order:
+{{
+    "results": [
+        {{
+            "post_index": 0,
+            "is_software_opportunity": true/false,
+            "pain_point": "Brief description of the core need/gap/idea (max 50 words)",
+            "opportunity_name": "Short name for a potential solution (3-6 words)",
+            "signal_type": "One of: pain_point, feature_request, workaround, integration_gap, idea, willingness_to_pay, manual_process",
+            "category": "One of: developer_tools, productivity, automation, analytics, communication, security, infrastructure, other",
+            "rejection_reason": "If not a software opportunity, explain why (otherwise null)"
+        }}
+    ]
+}}
+
+Mark as software opportunity if someone could build a SaaS/tool/integration to address it.
+Reject: job posts, political discussions, general questions, hardware issues, non-actionable complaints."""
+
     MATCH_OPPORTUNITIES_PROMPT = """You are matching new posts against existing known opportunities.
 
 Existing opportunities (these already exist in our database):
@@ -241,8 +274,17 @@ Rules:
         """Check if AI service is properly configured."""
         return bool(self._get_api_key()) and self.config.get('enabled', False)
 
-    def _call_llm(self, prompt: str) -> str | None:
-        """Call the configured LLM API."""
+    def _call_llm(self, prompt: str, max_tokens: int = 1000, timeout: int = 30) -> str | None:
+        """Call the configured LLM API.
+
+        Args:
+            prompt: The prompt to send
+            max_tokens: Maximum tokens in the response
+            timeout: Request timeout in seconds
+
+        Returns:
+            Raw response text or None
+        """
         if not self.is_configured():
             print("AI Service not configured")
             return None
@@ -253,11 +295,11 @@ Rules:
 
         try:
             if provider == 'glm':
-                return self._call_glm(prompt, api_key, model)
+                return self._call_glm(prompt, api_key, model, max_tokens, timeout)
             elif provider == 'openai':
-                return self._call_openai(prompt, api_key, model)
+                return self._call_openai(prompt, api_key, model, max_tokens, timeout)
             elif provider == 'anthropic':
-                return self._call_anthropic(prompt, api_key, model)
+                return self._call_anthropic(prompt, api_key, model, max_tokens, timeout)
             else:
                 print(f"Unknown AI provider: {provider}")
                 return None
@@ -265,7 +307,7 @@ Rules:
             print(f"AI API error: {e}")
             return None
 
-    def _call_glm(self, prompt: str, api_key: str, model: str) -> str | None:
+    def _call_glm(self, prompt: str, api_key: str, model: str, max_tokens: int = 1000, timeout: int = 30) -> str | None:
         """Call Zhipu GLM API (BigModel or Z.ai)."""
         url = self._get_provider_url('glm')
 
@@ -280,16 +322,16 @@ Rules:
                 {'role': 'user', 'content': prompt}
             ],
             'temperature': 0.3,
-            'max_tokens': 1000
+            'max_tokens': max_tokens
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
 
         data = response.json()
         return data['choices'][0]['message']['content']
 
-    def _call_openai(self, prompt: str, api_key: str, model: str) -> str | None:
+    def _call_openai(self, prompt: str, api_key: str, model: str, max_tokens: int = 1000, timeout: int = 30) -> str | None:
         """Call OpenAI API."""
         url = self._get_provider_url('openai')
 
@@ -304,16 +346,16 @@ Rules:
                 {'role': 'user', 'content': prompt}
             ],
             'temperature': 0.3,
-            'max_tokens': 1000
+            'max_tokens': max_tokens
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
 
         data = response.json()
         return data['choices'][0]['message']['content']
 
-    def _call_anthropic(self, prompt: str, api_key: str, model: str) -> str | None:
+    def _call_anthropic(self, prompt: str, api_key: str, model: str, max_tokens: int = 1000, timeout: int = 30) -> str | None:
         """Call Anthropic Claude API."""
         url = self._get_provider_url('anthropic')
 
@@ -328,10 +370,10 @@ Rules:
             'messages': [
                 {'role': 'user', 'content': prompt}
             ],
-            'max_tokens': 1000
+            'max_tokens': max_tokens
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
         response.raise_for_status()
 
         data = response.json()
@@ -372,6 +414,58 @@ Rules:
             return None
 
         return self._parse_json_response(response)
+
+    def analyze_posts_batch(
+        self,
+        posts: list[dict[str, str]],
+        signal_phrases: str = '',
+    ) -> list[dict[str, Any] | None]:
+        """Analyze multiple posts in a single API call.
+
+        Args:
+            posts: List of dicts with 'title' and 'content' keys
+            signal_phrases: Optional formatted signal phrases
+
+        Returns:
+            List of analysis dicts (same length as input), None for failures
+        """
+        if not posts:
+            return []
+
+        signal_context = ''
+        if signal_phrases:
+            signal_context = (
+                f"\nAlso look for these specific phrases/patterns the user "
+                f"has flagged as important signals: {signal_phrases}\n"
+            )
+
+        # Format posts with index
+        formatted = "\n".join([
+            f"--- Post {i} ---\nTitle: {p['title']}\nContent: {p['content'][:1500]}\n"
+            for i, p in enumerate(posts)
+        ])
+
+        prompt = self.BATCH_ANALYZE_PROMPT.format(
+            posts=formatted,
+            signal_context=signal_context,
+        )
+
+        response = self._call_llm(prompt, max_tokens=4096, timeout=90)
+        if not response:
+            return [None] * len(posts)
+
+        data = self._parse_json_response(response)
+        if not data or 'results' not in data:
+            return [None] * len(posts)
+
+        # Map results by post_index
+        results_by_idx: dict[int, dict] = {}
+        for r in data['results']:
+            idx = r.get('post_index')
+            if idx is not None:
+                results_by_idx[idx] = r
+
+        return [results_by_idx.get(i) for i in range(len(posts))]
 
     def cluster_pain_points(self, pain_points: list[dict]) -> list[dict]:
         """Cluster similar pain points together.

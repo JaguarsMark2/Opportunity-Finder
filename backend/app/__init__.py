@@ -1,7 +1,7 @@
 import os
 import sys
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
@@ -103,7 +103,8 @@ def create_app(test_config: bool = False) -> Flask:
     jwt = JWTManager(app)
     limiter = Limiter(
         key_func=get_remote_address,
-        default_limits=["200 per day", "50 per hour"],
+        default_limits=["2000 per day", "500 per hour"],
+        default_limits_exempt_when=lambda: request.method == 'OPTIONS',
     )
     limiter.init_app(app)
 
