@@ -409,7 +409,7 @@ Rules:
             signal_context=signal_context,
         )
 
-        response = self._call_llm(prompt)
+        response = self._call_llm(prompt, timeout=60)
         if not response:
             return None
 
@@ -450,13 +450,28 @@ Rules:
             signal_context=signal_context,
         )
 
-        response = self._call_llm(prompt, max_tokens=4096, timeout=90)
-        if not response:
-            return [None] * len(posts)
+        # Try batch call with retry on failure
+        data = None
+        for attempt in range(2):
+            response = self._call_llm(prompt, max_tokens=4096, timeout=120)
+            if not response:
+                print(f"[AI Batch] Attempt {attempt + 1} returned no response, {'retrying' if attempt == 0 else 'giving up'}...")
+                continue
 
-        data = self._parse_json_response(response)
+            data = self._parse_json_response(response)
+            if data and 'results' in data:
+                break
+            print(f"[AI Batch] Attempt {attempt + 1} failed to parse, {'retrying' if attempt == 0 else 'giving up'}...")
+            data = None
+
         if not data or 'results' not in data:
-            return [None] * len(posts)
+            # Fall back to individual calls for this batch
+            print(f"[AI Batch] Batch failed, falling back to individual analysis for {len(posts)} posts...")
+            results: list[dict[str, Any] | None] = []
+            for p in posts:
+                single = self.analyze_post(p['title'], p['content'], signal_phrases)
+                results.append(single)
+            return results
 
         # Map results by post_index
         results_by_idx: dict[int, dict] = {}
@@ -486,7 +501,7 @@ Rules:
         ])
 
         prompt = self.CLUSTER_PROMPT.format(pain_points=formatted)
-        response = self._call_llm(prompt)
+        response = self._call_llm(prompt, max_tokens=4096, timeout=120)
 
         if not response:
             # Fallback: treat each as its own cluster (single-item)
@@ -578,7 +593,7 @@ Rules:
             new_posts=formatted_posts,
         )
 
-        response = self._call_llm(prompt)
+        response = self._call_llm(prompt, max_tokens=4096, timeout=90)
         if not response:
             # No response — treat all as unmatched
             return {

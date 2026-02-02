@@ -34,7 +34,7 @@ PENDING_POST_TTL_DAYS = 30
 MAX_MATCH_OPPORTUNITIES = 50
 
 # Maximum pending posts to cluster in one AI call.
-MAX_CLUSTER_BATCH = 40
+MAX_CLUSTER_BATCH = 80
 
 
 class DataCollectorService:
@@ -128,10 +128,12 @@ class DataCollectorService:
         text = f"{title} {description}"
         engagement = opp_data.get('engagement_metrics', {})
 
-        # Check exclude keywords (always enforced)
+        # Check exclude keywords against title only — a post body might
+        # mention "hiring" or "job" in passing while still being a valid
+        # opportunity discussion.
         for keyword in self.filter_rules.get('exclude_keywords', []):
-            if keyword.lower() in text:
-                return False, f"Contains excluded keyword: {keyword}"
+            if keyword.lower() in title:
+                return False, f"Title contains excluded keyword: {keyword}"
 
         # Check required keywords (if any specified, at least one must match)
         require_keywords = self.filter_rules.get('require_keywords', [])
@@ -683,29 +685,35 @@ class DataCollectorService:
             return 0
 
         all_pending = self.db.query(PendingPost).all()
-        analyzed = [p for p in all_pending if p.pain_point]
+        # Only cluster posts that were properly AI-analyzed (pain_point
+        # differs from raw description, meaning AI extracted something)
+        analyzed = [
+            p for p in all_pending
+            if p.ai_analysis and p.pain_point and p.pain_point != p.description
+        ]
 
         if len(analyzed) < MIN_CONSENSUS_POSTS:
             return 0
 
-        # Format for clustering
-        pain_points = [
-            {
-                'id': p.id,
+        to_cluster = analyzed[:MAX_CLUSTER_BATCH]
+
+        # Use short numeric IDs in the prompt to save tokens (UUIDs are huge)
+        id_map: dict[str, PendingPost] = {}  # short_id -> PendingPost
+        pain_points = []
+        for idx, p in enumerate(to_cluster):
+            short_id = str(idx)
+            id_map[short_id] = p
+            pain_points.append({
+                'id': short_id,
                 'pain_point': p.pain_point or '',
                 'title': p.title,
                 'opportunity_name': p.opportunity_name or '',
-            }
-            for p in analyzed[:MAX_CLUSTER_BATCH]
-        ]
+            })
 
         print(f"[Scan] Clustering {len(pain_points)} pending posts...")
         clusters = self.ai_service.cluster_pain_points(pain_points)
 
         new_opp_count = 0
-
-        # Build a lookup for pending posts by ID
-        pending_by_id = {p.id: p for p in analyzed}
 
         for cluster in clusters:
             post_ids = cluster.get('post_ids', [])
@@ -718,8 +726,8 @@ class DataCollectorService:
             if confidence < 0.6:
                 continue
 
-            # Gather the PendingPost records for this cluster
-            cluster_posts = [pending_by_id[pid] for pid in post_ids if pid in pending_by_id]
+            # Map short IDs back to PendingPost records
+            cluster_posts = [id_map[pid] for pid in post_ids if pid in id_map]
             if len(cluster_posts) < MIN_CONSENSUS_POSTS:
                 continue
 
